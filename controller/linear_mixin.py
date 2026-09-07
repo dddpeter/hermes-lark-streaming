@@ -59,6 +59,41 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger("hermes_lark_streaming")
 
+# Strip stray internal-reasoning tags from any text we expose as the user-facing
+# seal summary.  The LLM stream may occasionally emit unbalanced ``</mm:think>``
+# tails (or, defensively, full ``<mm:think>...</mm:think>`` blocks) into the
+# final answer / reasoning buffer; without scrubbing, those tags leak into the
+# CardKit summary and end up visible to the user in Feishu.
+#
+# Order matters:
+#   1. Strip balanced ``<mm:think>...</mm:think>`` blocks (whole reasoning
+#      chunk, including the closing tag).
+#   2. Strip any orphan ``</mm:think>`` (LLM emitted open elsewhere).
+#   3. Strip any orphan ``<mm:think>`` (LLM truncated before closing).
+_THINK_BLOCK_RE = _re.compile(r"<mm:think>.*?</mm:think>", flags=_re.DOTALL)
+_THINK_CLOSE_RE = _re.compile(r"</mm:think>")
+_THINK_OPEN_RE = _re.compile(r"<mm:think>")
+
+
+def _scrub_think_tags(text: str) -> str:
+    """Remove leaked internal-reasoning tags from ``text``.
+
+    Handles three shapes observed in production:
+
+    * Balanced ``<mm:think>...</mm:think>`` blocks → stripped entirely.
+    * Stray ``</mm:think>`` closing tags (LLM emitted the open elsewhere).
+    * Stray ``<mm:think>`` opening tags (LLM truncated before closing).
+
+    Returns the scrubbed string, with leftover whitespace collapsed.
+    """
+    if not text:
+        return text
+    cleaned = _THINK_BLOCK_RE.sub("", text)
+    cleaned = _THINK_CLOSE_RE.sub("", cleaned)
+    cleaned = _THINK_OPEN_RE.sub("", cleaned)
+    return _re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
 def _build_seal_summary(state: UnifiedLinearState | None) -> str:
     """Build seal summary from state — answer text or fallback to reasoning."""
     if state is None:
@@ -67,6 +102,7 @@ def _build_seal_summary(state: UnifiedLinearState | None) -> str:
     if not summary_text and state.reasoning_rounds:
         summary_text = state.reasoning_rounds[-1].text if state.reasoning_rounds else ""
     if summary_text:
+        summary_text = _scrub_think_tags(summary_text)
         return summary_text[:120].replace("\n", " ").replace("```", "").strip()
     return ""
 
