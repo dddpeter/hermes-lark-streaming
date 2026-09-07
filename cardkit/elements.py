@@ -839,8 +839,9 @@ def _render_footer_field(
             if show_label:
                 return _T["elapsed"][0].format(val), _T["elapsed"][1].format(val)
             # Wrap value in inline-code so it visually pops against prose
-            # labels (mimics terminal / IDE logs).
-            return f"<code>{val}</code>", f"<code>{val}</code>"
+            # labels (mimics terminal / IDE logs). Card markdown has no
+            # <code> tag — backticks are the only inline-code syntax.
+            return f"`{val}`", f"`{val}`"
         return None, None
 
     if name == "model":
@@ -849,7 +850,7 @@ def _render_footer_field(
             return None, None
         # Inline-code the model name to anchor it visually — same trick as
         # elapsed: prose fields vs. monospace values.
-        tagged = f"<code>{_escape_md(v)}</code>"
+        tagged = f"`{_escape_md(v)}`"
         return tagged, tagged
 
     if name == "tokens":
@@ -857,9 +858,9 @@ def _render_footer_field(
         output_t = data.get("output_tokens", 0) or 0
         reasoning_t = data.get("reasoning_tokens", 0) or 0
         if input_t or output_t:
-            v = f"↑<code>{_compact(input_t)}</code> ↓<code>{_compact(output_t)}</code>"
+            v = f"↑`{_compact(input_t)}` ↓`{_compact(output_t)}`"
             if reasoning_t:
-                v += f" 💭<code>{_compact(reasoning_t)}</code>"
+                v += f" 💭`{_compact(reasoning_t)}`"
             return v, v
         return None, None
 

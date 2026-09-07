@@ -188,7 +188,7 @@ class TestBuildFooterElements:
         assert "✅" in result[1]["content"]
         assert "done" in result[1]["content"]
         assert "│" in result[1]["content"]
-        assert "<code>5.0s</code>" in result[1]["content"]
+        assert "`5.0s`" in result[1]["content"]
 
     def test_status_error(self) -> None:
         result = _build_footer_elements({}, is_error=True)
@@ -204,13 +204,14 @@ class TestBuildFooterElements:
 
     def test_elapsed_displayed(self) -> None:
         result = _build_footer_elements({"duration": 12.5}, fields=[["elapsed"]])
-        # v1.8.1: elapsed values are wrapped in <code> for monospace pop.
-        assert "<code>12.5s</code>" in result[1]["content"]
+        # v1.8.1: elapsed values are wrapped in backtick inline-code for
+        # monospace pop (card markdown has no <code> HTML tag).
+        assert "`12.5s`" in result[1]["content"]
 
     def test_model_displayed(self) -> None:
         result = _build_footer_elements({"model": "claude-3"}, fields=[["model"]])
-        # v1.8.1: model name is also wrapped in <code>.
-        assert "<code>claude-3</code>" in result[1]["content"]
+        # v1.8.1: model name is also wrapped in backtick inline-code.
+        assert "`claude-3`" in result[1]["content"]
 
     def test_context_displayed(self) -> None:
         result = _build_footer_elements(
@@ -227,9 +228,9 @@ class TestBuildFooterElements:
         )
         assert "↑" in result[1]["content"]
         assert "↓" in result[1]["content"]
-        # v1.8.1: token values wrapped in <code>.
-        assert "<code>1.0K</code>" in result[1]["content"]
-        assert "<code>500</code>" in result[1]["content"]
+        # v1.8.1: token values wrapped in backtick inline-code.
+        assert "`1.0K`" in result[1]["content"]
+        assert "`500`" in result[1]["content"]
 
     def test_show_label(self) -> None:
         result = _build_footer_elements(
@@ -1195,13 +1196,13 @@ class TestTechStyleFooterGlyphs:
         # (model name itself contains no ·, elapsed does not either.)
         assert content.count("│") >= 1
 
-    def test_elapsed_wraps_in_code_tag(self) -> None:
+    def test_elapsed_wraps_in_inline_code(self) -> None:
         result = _build_footer_elements({"duration": 3.2}, fields=[["elapsed"]])
-        assert "<code>3.2s</code>" in result[1]["content"]
+        assert "`3.2s`" in result[1]["content"]
 
-    def test_model_wraps_in_code_tag(self) -> None:
+    def test_model_wraps_in_inline_code(self) -> None:
         result = _build_footer_elements({"model": "claude-opus-4"}, fields=[["model"]])
-        assert "<code>claude-opus-4</code>" in result[1]["content"]
+        assert "`claude-opus-4`" in result[1]["content"]
 
     def test_error_row_wraps_in_red_around_glyph(self) -> None:
         """The whole footer row, including the new ❌ glyph, gets the red wrap."""
