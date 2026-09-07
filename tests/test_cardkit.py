@@ -6,6 +6,8 @@ from hermes_lark_streaming.cardkit import (
     _LOADING_HINT_ELEMENT_ID,
     _build_error_panel,
     _build_footer_elements,
+    _build_reasoning_round_title,
+    _build_tool_step_title,
     _compact,
     _count_tag_objects,
     _enforce_card_element_limit,
@@ -15,6 +17,7 @@ from hermes_lark_streaming.cardkit import (
     _loading_hint_element,
     _longest_backtick_run,
     _render_footer_field,
+    build_panel_header,
     build_preservative_seal_actions,
     build_streaming_card_v2,
     build_unified_panel,
@@ -174,28 +177,40 @@ class TestBuildFooterElements:
         # 默认字段包含 "status"，总是会渲染
         result = _build_footer_elements({})
         assert len(result) >= 2
-        assert "Completed" in result[1]["content"]
+        # v1.8.1: status uses ✅ emoji + short "done" label (tech style).
+        assert "✅" in result[1]["content"]
+        assert "done" in result[1]["content"]
 
     def test_status_completed(self) -> None:
         result = _build_footer_elements({"duration": 5})
         assert len(result) >= 2  # hr + markdown 元素
-        assert "Completed" in result[1]["content"]
+        # v1.8.1: ✅ done + pipe-separator + inline-code elapsed value.
+        assert "✅" in result[1]["content"]
+        assert "done" in result[1]["content"]
+        assert "│" in result[1]["content"]
+        assert "<code>5.0s</code>" in result[1]["content"]
 
     def test_status_error(self) -> None:
         result = _build_footer_elements({}, is_error=True)
+        # red colour wrap plus ❌ emoji glyph; the row as a whole turns red.
         assert "red" in result[1]["content"]
+        assert "❌" in result[1]["content"]
 
     def test_status_aborted(self) -> None:
         result = _build_footer_elements({}, is_aborted=True)
-        assert "Stopped" in result[1]["content"]
+        # v1.8.1: ⏹ halted label.
+        assert "⏹" in result[1]["content"]
+        assert "halted" in result[1]["content"]
 
     def test_elapsed_displayed(self) -> None:
         result = _build_footer_elements({"duration": 12.5}, fields=[["elapsed"]])
-        assert "12.5s" in result[1]["content"]
+        # v1.8.1: elapsed values are wrapped in <code> for monospace pop.
+        assert "<code>12.5s</code>" in result[1]["content"]
 
     def test_model_displayed(self) -> None:
         result = _build_footer_elements({"model": "claude-3"}, fields=[["model"]])
-        assert "claude-3" in result[1]["content"]
+        # v1.8.1: model name is also wrapped in <code>.
+        assert "<code>claude-3</code>" in result[1]["content"]
 
     def test_context_displayed(self) -> None:
         result = _build_footer_elements(
@@ -212,6 +227,9 @@ class TestBuildFooterElements:
         )
         assert "↑" in result[1]["content"]
         assert "↓" in result[1]["content"]
+        # v1.8.1: token values wrapped in <code>.
+        assert "<code>1.0K</code>" in result[1]["content"]
+        assert "<code>500</code>" in result[1]["content"]
 
     def test_show_label(self) -> None:
         result = _build_footer_elements(
@@ -1147,3 +1165,142 @@ class TestEnforceCardElementLimit:
         }
         result = _enforce_card_element_limit(card)
         assert result is card  # Unchanged
+
+
+class TestTechStyleFooterGlyphs:
+    """v1.8.1 — emoji + short labels replace wordy status text."""
+
+    def test_status_uses_emoji_in_normal_completion(self) -> None:
+        en, zh = _render_footer_field("status", {}, is_error=False, is_aborted=False, show_label=False)
+        assert en == "✅ done"
+        assert zh == "✅ 完成"
+
+    def test_status_uses_emoji_in_error_state(self) -> None:
+        en, zh = _render_footer_field("status", {}, is_error=True, is_aborted=False, show_label=False)
+        assert en == "❌ failed"
+        assert zh == "❌ 失败"
+
+    def test_status_uses_emoji_in_aborted_state(self) -> None:
+        en, zh = _render_footer_field("status", {}, is_error=False, is_aborted=True, show_label=False)
+        assert en == "⏹ halted"
+        assert zh == "⏹ 已停止"
+
+    def test_field_separator_is_pipe(self) -> None:
+        """Default fields should be joined with ` │ `, not `·`."""
+        result = _build_footer_elements({"duration": 5, "model": "claude-3"})
+        content = result[1]["content"]
+        # Pipe separator must be present.
+        assert "│" in content
+        # Old middot separator must NOT be present in field-join position.
+        # (model name itself contains no ·, elapsed does not either.)
+        assert content.count("│") >= 1
+
+    def test_elapsed_wraps_in_code_tag(self) -> None:
+        result = _build_footer_elements({"duration": 3.2}, fields=[["elapsed"]])
+        assert "<code>3.2s</code>" in result[1]["content"]
+
+    def test_model_wraps_in_code_tag(self) -> None:
+        result = _build_footer_elements({"model": "claude-opus-4"}, fields=[["model"]])
+        assert "<code>claude-opus-4</code>" in result[1]["content"]
+
+    def test_error_row_wraps_in_red_around_glyph(self) -> None:
+        """The whole footer row, including the new ❌ glyph, gets the red wrap."""
+        result = _build_footer_elements({"duration": 5}, is_error=True)
+        content = result[1]["content"]
+        assert content.startswith("<font color='red'>")
+        assert "❌" in content
+        assert content.endswith("</font>")
+
+
+class TestTechStyleToolStepTitle:
+    """v1.8.1 — tool step titles use status emoji glyph + drop the icon for terminal states."""
+
+    def test_running_keeps_icon_and_adds_emoji_glyph(self) -> None:
+        result = _build_tool_step_title({"status": "running", "title": "search", "icon": "search_outlined"})
+        content = result["text"]["content"]
+        assert "⏳" in content
+        assert "search" in content
+        # Running keeps its motion cue icon.
+        assert result.get("icon") is not None
+
+    def test_success_drops_icon_and_uses_checkmark(self) -> None:
+        result = _build_tool_step_title({"status": "success", "title": "read"})
+        content = result["text"]["content"]
+        assert "✅" in content
+        assert "**read**" in content
+        # Terminal state: no icon slot at all (cleaner row).
+        assert "icon" not in result
+
+    def test_error_drops_icon_and_uses_cross(self) -> None:
+        result = _build_tool_step_title({"status": "error", "title": "bad"})
+        content = result["text"]["content"]
+        assert "❌" in content
+        assert "**bad**" in content
+        assert "icon" not in result
+
+    def test_terminal_state_text_color_matches_status(self) -> None:
+        """Green for success, red for error, orange-300 for running."""
+        success = _build_tool_step_title({"status": "success", "title": "x"})
+        assert "green" in success["text"]["content"]
+        errored = _build_tool_step_title({"status": "error", "title": "x"})
+        assert "red" in errored["text"]["content"]
+        running = _build_tool_step_title({"status": "running", "title": "x"})
+        assert "orange-300" in running["text"]["content"]
+
+
+class TestTechStyleReasoningRoundTitle:
+    """v1.8.1 — reasoning round titles get a leading chevron glyph."""
+
+    def test_running_round_has_chevron(self) -> None:
+        result = _build_reasoning_round_title(1, 0.0, finalized=False)
+        content = result["text"]["content"]
+        assert "▸" in content
+        assert "第 1 轮" in content
+
+    def test_finalized_round_uses_green(self) -> None:
+        result = _build_reasoning_round_title(2, 1500.0, finalized=True)
+        content = result["text"]["content"]
+        assert "▸" in content
+        assert "green" in content
+        assert "1.5s" in content
+
+    def test_failed_round_uses_red(self) -> None:
+        result = _build_reasoning_round_title(3, 200.0, finalized=False, failed=True)
+        content = result["text"]["content"]
+        assert "▸" in content
+        assert "red" in content
+
+
+class TestTechStylePanelHeader:
+    """v1.8.1 — agent-process panel header gains a ▶ prefix + pipe separator."""
+
+    def test_header_with_no_activity_just_title(self) -> None:
+        result = build_panel_header(reasoning_rounds=[], tool_steps=[])
+        title = result["title"]["content"]
+        assert title.startswith("▶")
+        assert "agent loop" in title
+
+    def test_header_with_rounds_uses_pipe_separator(self) -> None:
+        from hermes_lark_streaming.state.linear import ReasoningRound
+        r = ReasoningRound(index=1, text="...")
+        r.elapsed_ms = 500.0
+        result = build_panel_header(reasoning_rounds=[r], tool_steps=[])
+        title = result["title"]["content"]
+        assert title.startswith("▶")
+        assert "│" in title
+        assert "1 rounds" in title
+
+    def test_header_with_tools_and_rounds(self) -> None:
+        from hermes_lark_streaming.state.linear import ReasoningRound
+        r1 = ReasoningRound(index=1, text="a")
+        r1.elapsed_ms = 200.0
+        r2 = ReasoningRound(index=2, text="b")
+        r2.elapsed_ms = 300.0
+        tools = [{"title": "x", "status": "success"}]
+        result = build_panel_header(reasoning_rounds=[r1, r2], tool_steps=tools, tool_elapsed_ms=150.0)
+        title = result["title"]["content"]
+        assert title.startswith("▶")
+        # 4 parts: agent loop | 2 rounds | 1 tools | 0.7s
+        assert title.count("│") == 3
+        assert "2 rounds" in title
+        assert "1 tools" in title

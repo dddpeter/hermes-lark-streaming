@@ -217,8 +217,11 @@ def build_panel_header(*, reasoning_rounds: list, current_reasoning_text: str = 
         en_parts.append(elapsed_str)
         zh_parts.append(elapsed_str)
 
-    en_full = " · ".join(en_parts)
-    zh_full = " · ".join(zh_parts)
+    # Tech-style: pipe separator + ▶ prefix on the unified-panel header so
+    # the panel reads like a process pipeline rather than a marketing badge.
+    prefix = _T["footer_panel_prefix"][1]
+    en_full = f"{prefix}" + " │ ".join(en_parts)
+    zh_full = f"{prefix}" + " │ ".join(zh_parts)
 
     title_el = {
         "tag": "plain_text",
@@ -462,20 +465,25 @@ def _build_tool_step_title(step: dict) -> dict:
     status = step.get("status", "running")
     status_info = _tool_status_info(status)
     title = step.get("title", step.get("name", "tool"))
-    content = f"<font color='{status_info['color']}'>**{_escape_md(title)}**</font>"
-    return {
-        "tag": "div",
-        "icon": {
-            "tag": "standard_icon",
-            "token": step.get("icon", "tool_02"),
-            "color": "grey",
-        },
-        "text": {
-            "tag": "lark_md",
-            "content": content,
-            "text_size": "notation",
-        },
-    }
+    # Map terminal-status word → single-glyph prefix. The glyph replaces the
+    # leading icon visually, so we keep the icon slot for terminal states
+    # only; running keeps its icon so the user sees motion.
+    glyph_key = {
+        "running": "tool_running_glyph",
+        "success": "tool_success_glyph",
+        "error": "tool_error_glyph",
+    }.get(status)
+    glyph = _T[glyph_key][1] if glyph_key else ""
+
+    div: dict = {"tag": "div"}
+    if status == "running":
+        # running: keep icon (motion cue) + glyph prefix
+        div["icon"] = {"tag": "standard_icon", "token": step.get("icon", "tool_02"), "color": "grey"}
+    # success/error: drop icon entirely — the glyph + colour carry the meaning.
+
+    content = f"<font color='{status_info['color']}'>{glyph}**{_escape_md(title)}**</font>"
+    div["text"] = {"tag": "lark_md", "content": content, "text_size": "notation"}
+    return div
 
 def _build_reasoning_round_title(round_index: int, elapsed_ms: float, finalized: bool, failed: bool = False) -> dict:
     """构建推理轮次标题 div. Colors: 进行中 orange-300, 已完成 green, 失败 red."""
@@ -492,7 +500,10 @@ def _build_reasoning_round_title(round_index: int, elapsed_ms: float, finalized:
     if elapsed:
         text += f" · {elapsed}"
 
-    content = f"<font color='{color}'>**{text}**</font>"
+    # Tech-style leading glyph: ▸ (chevron) reinforces the agent-loop pipeline
+    # vibe without adding noise — it's a single ASCII-ish glyph, not a banner.
+    prefix = _T["footer_round_prefix"][1]
+    content = f"<font color='{color}'>**{prefix}{text}**</font>"
     return {
         "tag": "div",
         "icon": {
@@ -682,8 +693,11 @@ def _build_footer_elements(
                 if zh:
                     zh_parts.append(zh)
         if en_parts:
-            en_lines.append(" · ".join(en_parts))
-            zh_lines.append(" · ".join(zh_parts))
+            # Use Unicode pipe with spaces as the field separator. This is
+            # the same glyph you see in `ls -l | grep ...` and `ps aux | head`
+            # — a deliberate terminal-pipeline vibe, less flowery than `·`.
+            en_lines.append(" │ ".join(en_parts))
+            zh_lines.append(" │ ".join(zh_parts))
 
     if not en_lines:
         return []
@@ -805,12 +819,18 @@ def _render_footer_field(
     is_aborted: bool,
     show_label: bool,
 ) -> tuple[str | None, str | None]:
+    # Tech-style status prefix: emoji + short label, restrained.
+    # The downstream caller wraps the entire row in red on error, so per-field
+    # colouring would be redundant here. We only override the *glyph* for the
+    # three terminal states.
     if name == "status":
         if is_error:
-            return _T["status_error"]
+            # The downstream red-wrap plus the emoji carry the meaning; we
+            # don't repeat "Error" inside the glyph.
+            return _T["footer_status_err"]
         if is_aborted:
-            return _T["status_stopped"]
-        return _T["status_completed"]
+            return _T["footer_status_stopped"]
+        return _T["footer_status_done"]
 
     if name == "elapsed":
         duration = data.get("duration", 0)
@@ -818,21 +838,28 @@ def _render_footer_field(
             val = _format_elapsed(duration * 1000)
             if show_label:
                 return _T["elapsed"][0].format(val), _T["elapsed"][1].format(val)
-            return val, val
+            # Wrap value in inline-code so it visually pops against prose
+            # labels (mimics terminal / IDE logs).
+            return f"<code>{val}</code>", f"<code>{val}</code>"
         return None, None
 
     if name == "model":
         v = data.get("model") or None
-        return v, v
+        if not v:
+            return None, None
+        # Inline-code the model name to anchor it visually — same trick as
+        # elapsed: prose fields vs. monospace values.
+        tagged = f"<code>{_escape_md(v)}</code>"
+        return tagged, tagged
 
     if name == "tokens":
         input_t = data.get("input_tokens", 0) or 0
         output_t = data.get("output_tokens", 0) or 0
         reasoning_t = data.get("reasoning_tokens", 0) or 0
         if input_t or output_t:
-            v = f"↑ {_compact(input_t)} ↓ {_compact(output_t)}"
+            v = f"↑<code>{_compact(input_t)}</code> ↓<code>{_compact(output_t)}</code>"
             if reasoning_t:
-                v += f" 💭 {_compact(reasoning_t)}"
+                v += f" 💭<code>{_compact(reasoning_t)}</code>"
             return v, v
         return None, None
 

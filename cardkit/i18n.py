@@ -56,6 +56,15 @@ _T: dict[str, tuple[str, str]] = {
     "truncated_suffix": ("\n\n... (truncated, {} chars total)", "\n\n... (已截断，共 {} 字)"),
     # v1.7.0 (R4): known interrupt reasons (core.py error_message) → bilingual
     "interrupt_by_new_message": ("Interrupted by new message", "被新消息中断"),
+    # ── v1.8.1: tech-style footer / agent-loop prefixes (monospace + geometry, restrained emoji) ──
+    "footer_status_done": ("✅ done", "✅ 完成"),
+    "footer_status_err": ("❌ failed", "❌ 失败"),
+    "footer_status_stopped": ("⏹ halted", "⏹ 已停止"),
+    "footer_panel_prefix": ("▶ ", "▶ "),
+    "footer_round_prefix": ("▸ ", "▸ "),
+    "tool_running_glyph": ("⏳ ", "⏳ "),
+    "tool_success_glyph": ("✅ ", "✅ "),
+    "tool_error_glyph": ("❌ ", "❌ "),
 }
 
 def _i18n(en: str, zh: str) -> dict[str, str]:
