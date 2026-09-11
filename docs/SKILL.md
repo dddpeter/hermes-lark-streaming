@@ -10,7 +10,7 @@
 
 | 属性 | 值 |
 |------|-----|
-| 版本 | 1.8.0 (DEV) | 协议 | MIT | Python | ≥3.11 | 与上游 | ⚠️ **不兼容** |
+| 版本 | 1.8.2 (DEV) | 协议 | MIT | Python | ≥3.11 | 与上游 | ⚠️ **不兼容** |
 
 ---
 
@@ -109,7 +109,7 @@ Background: _run_background_task ── [Hook 1/2]
 
 **4.11 300313 错误码处理 (v1.1.0)**: 生产日志发现 `add_elements` 后 1s 内 `stream_element` 可能返回 300313（飞书服务端元素持久化传播延迟）。`cardkit_stream_element` 内置 200ms×3 次专用重试；drain/seal 阶段 300313 时 fallback 到 `partial_update_element` 写入 answer，避免 full rebuild 导致卡片闪烁。
 
-**4.12 并发限流 (v1.1.0)**: `on_message_started` 时 seal 同 chat_id 的旧活跃卡片为"被新消息取代"，防止多张活跃卡片竞争 API 调用。
+**4.12 并发限流 (v1.1.0; v1.8.1 话题隔离)**: `on_message_started` 时 seal 同隔离键的旧活跃卡片为"被新消息取代"，防止多张活跃卡片竞争 API 调用。v1.8.1 起隔离键为 `(thread_id or chat_id)`：飞书话题群/群内话题中不同话题是独立 hermes 会话，互不误封；话题内与普通群聊/私聊行为不变。
 
 **4.13 配置刷新 (v1.1.0)**: 不做自动 mtime 检测（避免每 token 一次 stat()）。配置刷新方式：`/aowen config reload` 命令立即生效，或重启网关生效。`Config.reload()` 清缓存。
 
@@ -359,4 +359,4 @@ hermes gateway restart
 
 ---
 
-*Last updated: 2026-09-04 | Version: 1.8.0*
+*Last updated: 2026-09-08 | Version: 1.8.2*

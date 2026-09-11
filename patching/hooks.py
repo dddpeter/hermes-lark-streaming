@@ -96,9 +96,21 @@ def on_feishu_normalize(
         event.source = source
 
 @_safe_hook()
-def on_message_started(*, ctrl: Any, message_id: str, chat_id: str, anchor_id: str | None = None) -> None:
+def on_message_started(
+    *,
+    ctrl: Any,
+    message_id: str,
+    chat_id: str,
+    anchor_id: str | None = None,
+    thread_id: str | None = None,
+) -> None:
     """[注入点 1] 函数开头 — message.started."""
-    ctrl.on_message_started(message_id=message_id, chat_id=chat_id, anchor_id=anchor_id)
+    ctrl.on_message_started(
+        message_id=message_id,
+        chat_id=chat_id,
+        anchor_id=anchor_id,
+        thread_id=thread_id,
+    )
 
 @_safe_hook(default_return=False)
 def on_message_completed(
@@ -200,6 +212,7 @@ def on_message_interrupted(
     new_message_id: str,
     chat_id: str,
     anchor_id: str | None = None,
+    thread_id: str | None = None,
 ) -> None:
     """[注入点 9] interrupt 发生 — message.interrupted."""
     ctrl.on_interrupted(
@@ -207,6 +220,7 @@ def on_message_interrupted(
         new_message_id=new_message_id,
         chat_id=chat_id,
         anchor_id=anchor_id,
+        thread_id=thread_id,
     )
 
 
