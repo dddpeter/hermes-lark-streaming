@@ -317,6 +317,8 @@ class UnifiedControllerMixin:
                     panel_events=state.panel_events,
                     max_tool_steps=self._cfg.max_tool_steps,
                     max_reasoning_rounds=self._cfg.max_reasoning_rounds,
+                    # v1.8.3: reuse rendered fragments of immutable items.
+                    fragment_cache=state.panel_fragment_cache(),
                 )
                 new_elements.append(panel)
 
@@ -509,6 +511,8 @@ class UnifiedControllerMixin:
                     panel_events=state.panel_events,
                     max_tool_steps=self._cfg.max_tool_steps,
                     max_reasoning_rounds=self._cfg.max_reasoning_rounds,
+                    # v1.8.3: reuse rendered fragments of immutable items.
+                    fragment_cache=state.panel_fragment_cache(),
                 )
                 actions.append({
                     "action": "partial_update_element",
@@ -533,6 +537,8 @@ class UnifiedControllerMixin:
                     panel_events=state.panel_events,
                     max_tool_steps=self._cfg.max_tool_steps,
                     max_reasoning_rounds=self._cfg.max_reasoning_rounds,
+                    # v1.8.3: reuse rendered fragments of immutable items.
+                    fragment_cache=state.panel_fragment_cache(),
                 )
                 actions.append({
                     "action": "add_elements",

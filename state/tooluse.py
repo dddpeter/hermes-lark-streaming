@@ -22,6 +22,7 @@ __all__ = [
     "_SECRET_FLAG_RE",
 ]
 
+import itertools
 import json
 import os
 import re
@@ -40,6 +41,8 @@ class ToolStep:
     error_block: dict[str, Any] | None = None
     started_at: float | None = None
     elapsed_ms: float = 0.0
+    # v1.8.3: stable identity for the panel fragment cache (0 = uncached).
+    uid: int = 0
 
 @dataclass
 class ToolSession:
@@ -226,6 +229,9 @@ def _fenced_block(language: str, content: str) -> dict[str, Any]:
 class ToolUseTracker:
     """按 session 隔离，每个会话独立生命周期."""
 
+    # v1.8.3: process-wide uid sequence for the panel fragment cache.
+    _uid_seq = itertools.count(1)
+
     def __init__(self, max_steps: int = 128) -> None:
         self._session: ToolSession | None = None
         self._max_steps = max_steps
@@ -247,6 +253,7 @@ class ToolUseTracker:
                 status="running",
                 detail=detail,
                 started_at=time.time(),
+                uid=next(ToolUseTracker._uid_seq),
             )
         )
 
@@ -283,6 +290,7 @@ class ToolUseTracker:
                 started_at=time.time(),
                 error_block=_build_display_block(error, "text", sanitizer=sanitizer) if error else None,
                 result_block=_build_display_block(output, "json", sanitizer=sanitizer) if output else None,
+                uid=next(ToolUseTracker._uid_seq),
             )
         )
 
@@ -310,6 +318,8 @@ class ToolUseTracker:
                     "elapsed_ms": s.elapsed_ms,
                     "result_block": None if (desc and desc.get("no_result")) else s.result_block,
                     "error_block": s.error_block,
+                    # v1.8.3: stable identity for the panel fragment cache.
+                    "uid": s.uid,
                 }
             )
         return steps

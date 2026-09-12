@@ -881,12 +881,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                             _existing_len, _clean_len, (message_id or "?")[:12],
                             _existing[:60], clean_answer[:60],
                         )
-                        session.unified_state.answer_text = clean_answer
-                        # v1.7.0 (R2-01): answer_text replaced directly — reset
-                        # the incremental escape cache so the next flush escapes
-                        # the new text from scratch.
-                        session.unified_state.reset_escape_cache()
-                        session.unified_state.answer_dirty = True
+                        # v1.8.3: replace_answer_text adds answer-cap enforcement
+                        # on top of the v1.7.0 (R2-01) escape-cache reset.
+                        session.unified_state.replace_answer_text(clean_answer)
 
         # ── 保存错误/中断消息 ──
         # 用于在卡片正文中展示（而非仅页脚）

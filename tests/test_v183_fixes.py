@@ -289,3 +289,301 @@ class TestTextFallbackLogging:
 
         warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert not warnings, "successful fallback must not log warnings"
+
+
+# ══════════════════════════════════════════════════════════════════
+# Fix 7 — panel fragment cache (snapshot finalized rounds / finished steps)
+# ══════════════════════════════════════════════════════════════════
+
+class TestPanelFragmentCache:
+    """During a reasoning stream every delta sets panel_dirty and rebuilds
+    the ENTIRE panel — re-rendering all finalized rounds (regex truncation)
+    and finished tool steps (detail sanitize + code-fence scan) on every
+    80ms flush. Rendered fragments of IMMUTABLE items are cacheable."""
+
+    @staticmethod
+    def _round(i: int, text: str = "推理内容" * 10, elapsed: float = 1234.0):
+        from hermes_lark_streaming.state.linear import ReasoningRound
+        r = ReasoningRound(index=i, text=text, start_time=0.0)
+        r.elapsed_ms = elapsed
+        r.finalized = True
+        # In production, uid is assigned by _finalize_current_reasoning;
+        # direct construction (legacy/tests) leaves uid=0 → never cached.
+        r.uid = i
+        return r
+
+    def test_reuses_finalized_round_fragments(self, monkeypatch) -> None:
+        import hermes_lark_streaming.cardkit.elements as elements
+
+        rendered: list[str] = []
+        orig = elements._truncate_reasoning
+
+        def spy(text: str) -> str:
+            rendered.append(text)
+            return orig(text)
+
+        monkeypatch.setattr(elements, "_truncate_reasoning", spy)
+
+        cache: dict = {}
+        rounds = [self._round(1, text="第一轮" * 20), self._round(2, text="第二轮" * 20)]
+        kw = dict(reasoning_rounds=rounds, current_reasoning_text="",
+                  tool_steps=[], show_reasoning=True)
+
+        elements.build_panel_children(fragment_cache=cache, **kw)
+        elements.build_panel_children(
+            fragment_cache=cache, **dict(kw, current_reasoning_text="更多思考"))
+
+        # Each finalized round rendered exactly ONCE across both builds —
+        # the second build (new in-progress text) must reuse fragments.
+        assert rendered.count(rounds[0].text) == 1, "round 1 re-rendered"
+        assert rendered.count(rounds[1].text) == 1, "round 2 re-rendered"
+        assert rendered.count("更多思考") == 1
+
+    def test_reuses_finished_tool_step_fragments(self, monkeypatch) -> None:
+        import hermes_lark_streaming.cardkit.elements as elements
+
+        rendered: list = []
+        orig = elements._build_tool_step_elements
+
+        def spy(step: dict) -> list[dict]:
+            rendered.append(step.get("uid"))
+            return orig(step)
+
+        monkeypatch.setattr(elements, "_build_tool_step_elements", spy)
+
+        step = {
+            "uid": 7, "name": "read", "title": "Read (1.2 s)",
+            "status": "success", "detail": "src/app.py",
+            "output": "", "error": "", "icon": "file-link-text_outlined",
+            "result_block": None, "error_block": None,
+        }
+        cache: dict = {}
+        kw = dict(reasoning_rounds=[], current_reasoning_text="",
+                  tool_steps=[step], show_reasoning=True)
+
+        elements.build_panel_children(fragment_cache=cache, **kw)
+        elements.build_panel_children(fragment_cache=cache, **kw)
+
+        assert rendered.count(7) == 1, "finished step re-rendered"
+
+    def test_running_tool_step_re_rendered_until_final(self, monkeypatch) -> None:
+        import hermes_lark_streaming.cardkit.elements as elements
+
+        rendered: list = []
+        orig = elements._build_tool_step_elements
+
+        def spy(step: dict) -> list[dict]:
+            rendered.append(step.get("uid"))
+            return orig(step)
+
+        monkeypatch.setattr(elements, "_build_tool_step_elements", spy)
+
+        running = {
+            "uid": 9, "name": "exec", "title": "Run command",
+            "status": "running", "detail": "pytest", "output": "",
+            "error": "", "icon": "setting_outlined",
+            "result_block": None, "error_block": None,
+        }
+        done = {**running, "status": "success"}
+        cache: dict = {}
+        base = dict(reasoning_rounds=[], current_reasoning_text="",
+                    tool_steps=[running], show_reasoning=True)
+
+        elements.build_panel_children(fragment_cache=cache, **base)
+        elements.build_panel_children(
+            fragment_cache=cache, **dict(base, tool_steps=[done]))
+        elements.build_panel_children(
+            fragment_cache=cache, **dict(base, tool_steps=[done]))
+
+        # running: rendered when scheduled (never cached); final: rendered
+        # once, cached; third build: served from cache.
+        assert rendered == [9, 9], (
+            "expected running→render(no cache), final→render+cache, next→reuse"
+        )
+
+    def test_none_cache_renders_fresh_every_time(self, monkeypatch) -> None:
+        """Seal/drain paths (fragment_cache=None) keep today's behaviour —
+        they MUTATE panel children (trimming) and must never share objects
+        with the streaming cache."""
+        import hermes_lark_streaming.cardkit.elements as elements
+
+        rendered: list[str] = []
+        orig = elements._truncate_reasoning
+
+        def spy(text: str) -> str:
+            rendered.append(text)
+            return orig(text)
+
+        monkeypatch.setattr(elements, "_truncate_reasoning", spy)
+
+        rounds = [self._round(1)]
+        kw = dict(reasoning_rounds=rounds, current_reasoning_text="",
+                  tool_steps=[], show_reasoning=True)
+
+        elements.build_panel_children(**kw)
+        elements.build_panel_children(**kw)
+
+        assert rendered.count(rounds[0].text) == 2, "expected fresh renders"
+
+    def test_fragment_cache_bounded(self) -> None:
+        import hermes_lark_streaming.cardkit.elements as elements
+
+        cache: dict = {}
+        for i in range(2000):
+            elements._put_fragment(cache, ("r", i), [{"tag": "div"}])
+        assert len(cache) <= elements._FRAGMENT_CACHE_MAX, (
+            "fragment cache grows unbounded"
+        )
+
+    def test_reasoning_rounds_get_stable_uids(self) -> None:
+        from hermes_lark_streaming.state.linear import UnifiedLinearState
+
+        state = UnifiedLinearState()
+        state.on_reasoning_delta("第一轮")
+        state.on_answer_delta("答案")          # finalizes round 1
+        state.on_reasoning_delta("第二轮")
+        state.on_answer_delta("答案2")         # finalizes round 2
+
+        uids = [r.uid for r in state.reasoning_rounds]
+        assert uids[0] != 0 and uids[1] != 0, "rounds missing uid"
+        assert uids[0] != uids[1], "round uids not unique"
+
+    def test_tool_steps_get_uids(self) -> None:
+        from hermes_lark_streaming.state.tooluse import ToolUseTracker
+
+        tracker = ToolUseTracker()
+        tracker.record_start("read", "src/app.py")
+        tracker.record_end("read", output="ok")
+
+        steps = tracker.build_display_steps()
+        assert steps[0].get("uid"), "display steps missing uid"
+
+
+class TestUnifiedFlushUsesFragmentCache:
+    async def test_second_flush_reuses_round_fragments(self, monkeypatch) -> None:
+        """End-to-end: _do_unified_flush passes the state's fragment cache,
+        so a second panel rebuild does not re-render finalized rounds."""
+        import hermes_lark_streaming.cardkit.elements as elements
+        from hermes_lark_streaming.controller.mixin import STREAMING
+        from hermes_lark_streaming.state.linear import UnifiedLinearState
+        from hermes_lark_streaming.cardkit import (
+            ANSWER_ELEMENT_ID,
+            UNIFIED_PANEL_ELEMENT_ID,
+        )
+
+        ctrl = _setup_ctrl(linear=True)
+        # show_reasoning defaults to False (reads the on-disk hermes config
+        # via _reload_cached, not _raw) — pre-seed the TTL cache so the panel
+        # renders reasoning rounds like real installs with it enabled.
+        import time as _time
+        ctrl._cfg._reload_cache = {"display": {"show_reasoning": True}}
+        ctrl._cfg._reload_cache_at = _time.monotonic()
+        session = _make_session("msg_frag", linear=True)
+        session.card_id = "card_frag"
+        session.card_msg_id = "om_frag"
+        session._creation_stages = {"answer", "panel", "hint_removed"}
+        session.existing_elements = {
+            ANSWER_ELEMENT_ID, UNIFIED_PANEL_ELEMENT_ID,
+        }
+        session.state = STREAMING
+        ctrl._sessions["msg_frag"] = session
+
+        state = UnifiedLinearState()
+        session.unified_state = state
+        # Two finalized rounds (uid assigned at finalize).
+        state.on_reasoning_delta("第一轮思考" * 5)
+        state.on_answer_delta("答案")
+        state.on_reasoning_delta("第二轮思考" * 5)
+        state.on_answer_delta("答案2")
+        state.panel_dirty = False
+
+        rendered: list[str] = []
+        orig = elements._truncate_reasoning
+
+        def spy(text: str) -> str:
+            rendered.append(text)
+            return orig(text)
+
+        monkeypatch.setattr(elements, "_truncate_reasoning", spy)
+
+        state.panel_dirty = True
+        await ctrl._do_unified_flush(session)
+        after_first = len(rendered)
+        assert after_first >= 2, "finalized rounds were not rendered"
+
+        # Second rebuild — same immutable rounds, must hit the cache.
+        state.panel_dirty = True
+        await ctrl._do_unified_flush(session)
+
+        assert len(rendered) == after_first, (
+            f"finalized rounds re-rendered on second flush "
+            f"({len(rendered)} != {after_first}) — fragment cache not wired"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════
+# Fix 8 — answer_text storage cap
+# ══════════════════════════════════════════════════════════════════
+
+class TestAnswerLengthCap:
+    """answer_text was the only unbounded text in UnifiedLinearState
+    (R2-02 capped rounds/panel_events/bg_review but not the answer).
+    Pathological multi-MB answers also get fully re-escaped at seal."""
+
+    @staticmethod
+    def _state_with_cap(monkeypatch, cap: int):
+        from hermes_lark_streaming.state.linear import UnifiedLinearState
+        monkeypatch.setattr(UnifiedLinearState, "_MAX_ANSWER_CHARS", cap)
+        return UnifiedLinearState()
+
+    def test_answer_delta_truncates_with_notice(self, monkeypatch) -> None:
+        state = self._state_with_cap(monkeypatch, 100)
+        state.on_answer_delta("x" * 500)
+
+        assert len(state.answer_text) <= 100 + 200, "answer not truncated"
+        assert state.answer_truncated, "truncation flag not set"
+        assert "截断" in state.answer_text or "truncated" in state.answer_text.lower(), (
+            "no truncation notice visible to the user"
+        )
+
+    def test_further_deltas_ignored_after_truncation(self, monkeypatch) -> None:
+        state = self._state_with_cap(monkeypatch, 100)
+        state.on_answer_delta("x" * 500)
+        truncated_len = len(state.answer_text)
+
+        state.on_answer_delta("y" * 5000)
+
+        assert len(state.answer_text) == truncated_len, (
+            "answer grew after truncation — unbounded growth remains"
+        )
+
+    def test_escape_cache_reset_on_truncation(self, monkeypatch) -> None:
+        from hermes_lark_streaming.cardkit.md import escape_markdown_asterisks
+
+        state = self._state_with_cap(monkeypatch, 200)
+        state.on_answer_delta("a*b")
+        state.on_answer_delta("c*d" * 500)   # crosses the cap → truncated
+
+        assert state.answer_truncated
+        assert state.escaped_answer_view() == escape_markdown_asterisks(state.answer_text), (
+            "escaped view stale after truncation"
+        )
+
+    def test_normal_answers_untouched(self) -> None:
+        from hermes_lark_streaming.state.linear import UnifiedLinearState
+
+        state = UnifiedLinearState()
+        state.on_answer_delta("正常回答")
+        assert not state.answer_truncated
+        assert state.answer_text == "正常回答"
+
+    def test_replace_answer_text_applies_cap(self, monkeypatch) -> None:
+        from hermes_lark_streaming.cardkit.md import escape_markdown_asterisks
+
+        state = self._state_with_cap(monkeypatch, 100)
+        state.replace_answer_text("z" * 500)
+
+        assert state.answer_truncated
+        assert len(state.answer_text) <= 100 + 200
+        assert state.escaped_answer_view() == escape_markdown_asterisks(state.answer_text)
+        assert state.answer_dirty, "replacement must mark dirty"

@@ -248,6 +248,54 @@ def build_panel_header(*, reasoning_rounds: list, current_reasoning_text: str = 
 
 _REASONING_DISPLAY_LIMIT = 2000  # 单条推理文本最大显示字数
 
+# v1.8.3: panel fragment cache — rendered elements of IMMUTABLE panel items
+# (finalized reasoning rounds, finished tool steps) are cached and reused
+# across flushes. During a reasoning stream every delta sets panel_dirty and
+# rebuilds the whole panel; without the cache all immutable items were
+# re-rendered (regex truncation + detail sanitize + code-fence scan) on every
+# 80ms flush. Streaming paths pass a per-session cache (see
+# UnifiedLinearState.panel_fragment_cache); seal/drain paths pass None —
+# they MUTATE panel children (trimming) and must never share objects with
+# the streaming cache.
+_FRAGMENT_CACHE_MAX = 512
+
+def _put_fragment(cache: dict, key, value: list[dict]) -> None:
+    """Insert with simple FIFO eviction — bounded memory for marathon sessions."""
+    if len(cache) >= _FRAGMENT_CACHE_MAX:
+        cache.pop(next(iter(cache)), None)
+    cache[key] = value
+
+def _get_or_render_fragment(
+    fragment_cache: dict | None,
+    key: tuple | None,
+    render,
+) -> list[dict]:
+    """key=None means uncachable (running step / uid-less legacy item)."""
+    if fragment_cache is None or key is None:
+        return render()
+    frag = fragment_cache.get(key)
+    if frag is None:
+        frag = render()
+        _put_fragment(fragment_cache, key, frag)
+    return frag
+
+def _round_fragment(round_) -> list[dict]:
+    """Render one finalized reasoning round (title + optional text div)."""
+    els: list[dict] = [_build_reasoning_round_title(
+        round_.index, round_.elapsed_ms, finalized=True,
+    )]
+    if round_.text.strip():
+        els.append({
+            "tag": "div",
+            "margin": "0px 0px 0px 22px",
+            "text": {
+                "tag": "lark_md",
+                "content": _truncate_reasoning(round_.text),
+                "text_size": "notation",
+            },
+        })
+    return els
+
 def _is_collapse_hint_child(child: Any) -> bool:
     """Whether a panel child is the collapsed-items hint (bilingual-safe).
 
@@ -273,9 +321,14 @@ def _truncate_reasoning(text: str) -> str:
     truncated = text[:_REASONING_DISPLAY_LIMIT - len(suffix)] + suffix
     return truncated
 
-def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str = "", tool_steps: list[dict], show_reasoning: bool = True, panel_events: list[tuple[str, int]] | None = None, max_tool_steps: int = 20, max_reasoning_rounds: int = 20) -> list[dict]:
+def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str = "", tool_steps: list[dict], show_reasoning: bool = True, panel_events: list[tuple[str, int]] | None = None, max_tool_steps: int = 20, max_reasoning_rounds: int = 20, fragment_cache: dict | None = None) -> list[dict]:
     """Build child elements for unified panel body. Renders chronologically (panel_events)
-    or sequentially (fallback). Trims to max_* limits (Feishu 200-element cap)."""
+    or sequentially (fallback). Trims to max_* limits (Feishu 200-element cap).
+
+    v1.8.3: fragment_cache — when provided, rendered elements of immutable
+    items (finalized rounds keyed ("r", uid); finished tool steps keyed
+    ("s", uid)) are reused across builds. Running steps and uid-less items
+    always render fresh."""
     trimmed_rounds = 0
     trimmed_tools = 0
 
@@ -333,23 +386,20 @@ def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str 
         for kind, idx in panel_events:
             if kind == "reasoning" and show_reasoning and idx < len(reasoning_rounds):
                 round_ = reasoning_rounds[idx]
-                children.append(_build_reasoning_round_title(
-                    round_.index, round_.elapsed_ms, finalized=True,
+                children.extend(_get_or_render_fragment(
+                    fragment_cache,
+                    ("r", round_.uid) if round_.uid else None,
+                    lambda r=round_: _round_fragment(r),
                 ))
-                if round_.text.strip():
-                    children.append({
-                        "tag": "div",
-                        "margin": "0px 0px 0px 22px",
-                        "text": {
-                            "tag": "lark_md",
-                            "content": _truncate_reasoning(round_.text),
-                            "text_size": "notation",
-                        },
-                    })
             elif kind == "tool" and idx < len(tool_steps):
                 if idx not in rendered_tools:
                     step = tool_steps[idx]
-                    children.extend(_build_tool_step_elements(step))
+                    uid = step.get("uid") or 0
+                    children.extend(_get_or_render_fragment(
+                        fragment_cache,
+                        ("s", uid) if uid and step.get("status") != "running" else None,
+                        lambda s=step: _build_tool_step_elements(s),
+                    ))
                     rendered_tools.add(idx)
 
         # In-progress reasoning.
@@ -381,19 +431,11 @@ def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str 
         )
         if has_reasoning:
             for round_ in reasoning_rounds:
-                children.append(_build_reasoning_round_title(
-                    round_.index, round_.elapsed_ms, finalized=True,
+                children.extend(_get_or_render_fragment(
+                    fragment_cache,
+                    ("r", round_.uid) if round_.uid else None,
+                    lambda r=round_: _round_fragment(r),
                 ))
-                if round_.text.strip():
-                    children.append({
-                        "tag": "div",
-                        "margin": "0px 0px 0px 22px",
-                        "text": {
-                            "tag": "lark_md",
-                            "content": _truncate_reasoning(round_.text),
-                            "text_size": "notation",
-                        },
-                    })
 
             # In-progress reasoning.
             if current_reasoning_text:
@@ -414,14 +456,19 @@ def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str 
 
         # Tool steps.
         for step in tool_steps:
-            children.extend(_build_tool_step_elements(step))
+            uid = step.get("uid") or 0
+            children.extend(_get_or_render_fragment(
+                fragment_cache,
+                ("s", uid) if uid and step.get("status") != "running" else None,
+                lambda s=step: _build_tool_step_elements(s),
+            ))
 
     if not children:
         children.append({"tag": "markdown", "content": " "})
 
     return children
 
-def build_unified_panel(*, reasoning_rounds: list, current_reasoning_text: str = "", tool_steps: list[dict], tool_elapsed_ms: float = 0, show_reasoning: bool = True, expanded: bool = False, element_id: str | None = None, panel_events: list[tuple[str, int]] | None = None, max_tool_steps: int = 20, max_reasoning_rounds: int = 20) -> dict:
+def build_unified_panel(*, reasoning_rounds: list, current_reasoning_text: str = "", tool_steps: list[dict], tool_elapsed_ms: float = 0, show_reasoning: bool = True, expanded: bool = False, element_id: str | None = None, panel_events: list[tuple[str, int]] | None = None, max_tool_steps: int = 20, max_reasoning_rounds: int = 20, fragment_cache: dict | None = None) -> dict:
     """Build full unified panel. Thin assembler over build_panel_header/children."""
     header = build_panel_header(
         reasoning_rounds=reasoning_rounds,
@@ -438,6 +485,7 @@ def build_unified_panel(*, reasoning_rounds: list, current_reasoning_text: str =
         panel_events=panel_events,
         max_tool_steps=max_tool_steps,
         max_reasoning_rounds=max_reasoning_rounds,
+        fragment_cache=fragment_cache,
     )
     panel = {
         "tag": "collapsible_panel",

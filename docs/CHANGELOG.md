@@ -1,3 +1,18 @@
+## v1.8.3 (2026-09-09)
+
+健壮性与性能专项 — v1.8.2 全量代码评审落地（5 项健壮性 + 2 项性能），全部 TDD（先复现后修复），1020 单元用例全绿。
+
+| 类型 | 问题/功能 | 原因 | 修复/说明 |
+|------|-----------|------|--------------------------------|
+| 🐛 Bug Fix | **控制器单例竞态**：两个线程同时首次调用 `get_controller()` 会各建一个实例（两套 FeishuClient + 分裂的 session 表），全模块其它共享结构都有锁，唯独单例入口裸奔 | 无锁 check-then-act | 双重检查锁（`controller/core.py`） |
+| 🐛 Bug Fix | **跨线程调度静默停摆**：从非 loop 线程调 `_fire_and_forget` 时用 `loop.create_task`——内部走非线程安全的 `call_soon`（不写 self-pipe），loop 阻塞在 select 时不被唤醒，协程永远不执行（on_answer/on_completed 等回调可能来自 worker 线程） | 调度 API 线程归属未判定 | 先判 `asyncio.get_running_loop() is loop`：loop 线程走原 create_task + 强引用路径（不变）；非 loop 线程走 `run_coroutine_threadsafe`（与 `FlushController.schedule_update` 既有正确做法对齐）(`controller/core.py`) |
+| 🐛 Bug Fix | **reply 通道零重试 + 兕底静默失败**：`reply_card` / `reply_card_by_id` / `reply_text` 未走 `_retry_transient`（cardkit_* 系列都有）——占位卡创建/文本兕底是最后投递手段，网络抖一次用户就什么都收不到；`_send_text_fallback` 失败还是裸 `except: pass` 零日志 | retry 封装覆盖不全 | 三个 reply_* 统一走 `_retry_transient`（永久错误如消息已删除不重试）；兕底失败改 WARNING+exc_info（v1.7.0 R1 同族反模式清扫）(`feishu/client.py`, `controller/core.py`) |
+| ⚡ Perf | **panel 片段缓存**：推理流式期间每个 delta 置脏 panel_dirty → 每 80ms 全量重渲染所有已完成轮次/步骤（regex 截断 + detail 脱敏 + 代码围栏扫描），长会话线性膨胀 | 渲染无增量概念 | 不可变项片段缓存：已完结推理轮（uid 键）与已结束工具步渲染结果跨 flush 复用，进行中项每次重渲染；ReasoningRound/ToolStep 新增稳定 uid；封卡/drain 路径不传缓存（会改写 panel children，绝不与流式缓存共享对象）；缓存 FIFO 上界 512 条 (`cardkit/elements.py`, `state/linear.py`, `state/tooluse.py`, `controller/linear_mixin.py`) |
+| ⚡ Perf | **answer_text 存储上限**：R2-02 给 rounds/panel_events/bg_review 都加了 cap，唯独 answer_text 无界——病态超长答案膨胀转义缓存、每次 flush 载荷与封卡时全量重转义 | 遗漏最后一项无界文本 | `_MAX_ANSWER_CHARS = 50_000` 头部窗口策略：超限截断 + 可见截断提示（完整答案仍在 hermes 完成载荷中）；截断/替换时重置增量转义缓存；on_completed MISMATCH 分支改走带 cap 的 `replace_answer_text` (`state/linear.py`, `controller/core.py`) |
+| 🧪 Test | 新增 25 个 v1.8.3 回归测试 `test_v183_fixes.py`（TDD：13 例先复现失败后修复 + 12 例行为守护）| 防回归 | 单例竞态 2（并发首调唯一实例/复用）、线程调度 2（非 loop 线程唤醒阻塞 loop/loop 线程路径不变）、reply 重试 6（三方法×网络错误重试+永久错误不重试）、兕底日志 2、片段缓存 7（轮次/步骤复用/running 不缓存/无缓存路径新鲜渲染/上界/uid 分配）、flush 集成 1（二次 flush 零重渲染）、answer 上限 5 |
+
+**评审背景**: v1.8.2 发布后对 controller / flush / state / feishu / cardkit 核心（~7000 行）做全量代码评审，产出 11 项发现（按优先级排序），本版落地其中 7 项（上表 5 项健壮性 + 2 项性能）；其余遗留：图片下载 SSRF/大小上限防护、panel 构建六处重复调用点收敛、死代码清理、状态枚举化、每卡封卡摘要日志，留待后续版本。
+
 ## v1.8.2 (2026-09-08)
 
 hermes v0.21.1 (tag v2026.9.7) 升级冲击适配版 — 纯测试与文档，零运行时代码改动。hermes v2026.9.7 进行了大规模文件分解（2 万行级大文件拆成十几个模块），触发本插件 2 个集成哨兵报警（30 用例中 2 failed / 25 passed / 3 skipped）。经三方独立审计（hermes hook/session 机制审计、adapter patch 点审计、测试与文档影响面审计）+ 行为级验证（插件经 hermes 真实加载入口装上真 v0.21.1 源码，41 项检查全过）确认：**生产 patch 面 100% 兼容，报警全部源于哨兵检测地址过时**（盯着的 hermes 内部符号搬家了，名字还在新地址用着）。本版将 2 个哨兵的检测面迁移到 hermes 新布局，CI 恢复全绿。

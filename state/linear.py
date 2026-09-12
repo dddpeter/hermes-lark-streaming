@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import itertools
 import time
+
+# v1.8.3: process-wide unique sequence for stable item identities — the panel
+# fragment cache (cardkit/elements.py) keys rendered fragments by these uids.
+_FRAGMENT_UID_SEQ = itertools.count(1)
+
+# v1.8.3: appended when answer_text hits _MAX_ANSWER_CHARS (head kept).
+_ANSWER_TRUNCATED_NOTICE = "\n\n> ⚠️ 内容过长，已截断显示 / Content truncated: answer exceeds card limit"
 
 class ReasoningRound:
     """One round of AI reasoning / thinking."""
 
-    __slots__ = ("index", "text", "elapsed_ms", "start_time", "finalized")
+    __slots__ = ("uid", "index", "text", "elapsed_ms", "start_time", "finalized")
 
     def __init__(self, index: int, text: str = "", start_time: float = 0.0) -> None:
+        # v1.8.3: stable identity (0 = uncached legacy). round.index can be
+        # reused after storage-cap drops, so it is NOT a safe cache key.
+        self.uid: int = 0
         self.index = index
         self.text = text
         self.elapsed_ms: float = 0.0
@@ -34,6 +45,9 @@ class UnifiedLinearState:
         # v1.7.0 (R2-01): incremental escape cache for answer_text
         "_escaped_cache",
         "_escaped_src_len",
+        # v1.8.3: answer storage cap flag + panel fragment cache
+        "_answer_truncated",
+        "_panel_fragment_cache",
     )
 
     # v1.7.0 (R2-02): storage caps. Display already trims to max=20 at render
@@ -43,6 +57,11 @@ class UnifiedLinearState:
     _MAX_REASONING_ROUNDS_STORED = 50
     _MAX_PANEL_EVENTS_STORED = 100
     _MAX_BG_REVIEW_MESSAGES_STORED = 20
+    # v1.8.3: answer_text was the only unbounded text left — pathological
+    # multi-MB answers grew the escape cache, every flush payload AND the
+    # seal-time full re-escape. Head-window policy: keep the FIRST cap chars
+    # + a visible notice, drop everything after.
+    _MAX_ANSWER_CHARS = 50_000
 
     def __init__(self) -> None:
         # Reasoning tracking
@@ -73,6 +92,10 @@ class UnifiedLinearState:
         # v1.7.0 (R2-01): escaped-answer cache (see escaped_answer_view)
         self._escaped_cache: str | None = None
         self._escaped_src_len: int = 0
+
+        # v1.8.3: answer cap flag + lazily-created panel fragment cache
+        self._answer_truncated: bool = False
+        self._panel_fragment_cache: dict | None = None
 
     def on_reasoning_delta(self, text: str) -> None:
         """Reasoning text increment. Starts a new round if not already in one."""
@@ -107,8 +130,46 @@ class UnifiedLinearState:
     def on_answer_delta(self, text: str) -> None:
         """Answer text increment. Finalizes any in-progress reasoning first."""
         self._finalize_current_reasoning()
+        if self._answer_truncated:
+            # v1.8.3: head-window policy — once capped, later deltas are
+            # dropped entirely (the full answer still lives in hermes' own
+            # completion payload; the card shows the capped head + notice).
+            return
         self.answer_text += text
+        max_chars = self._MAX_ANSWER_CHARS
+        if len(self.answer_text) > max_chars:
+            self.answer_text = self.answer_text[:max_chars] + _ANSWER_TRUNCATED_NOTICE
+            self._answer_truncated = True
+            # Truncation rewrites the tail — the prefix-based incremental
+            # escape cache is no longer valid (see escaped_answer_view).
+            self.reset_escape_cache()
         self.answer_dirty = True
+
+    def replace_answer_text(self, text: str) -> None:
+        """v1.8.3: directly replace answer_text (on_completed MISMATCH path)
+        with cap enforcement — replaces the previous raw assignment + manual
+        reset_escape_cache()/answer_dirty sequence in controller/core.py."""
+        self.answer_text = text
+        max_chars = self._MAX_ANSWER_CHARS
+        if len(self.answer_text) > max_chars:
+            self.answer_text = self.answer_text[:max_chars] + _ANSWER_TRUNCATED_NOTICE
+            self._answer_truncated = True
+        self.reset_escape_cache()
+        self.answer_dirty = True
+
+    @property
+    def answer_truncated(self) -> bool:
+        """Whether answer_text hit the storage cap (head kept, tail dropped)."""
+        return self._answer_truncated
+
+    def panel_fragment_cache(self) -> dict:
+        """v1.8.3: lazily-created cache shared with the panel renderer —
+        rendered fragments of immutable items (finalized reasoning rounds,
+        finished tool steps) keyed by uid. Lives on the state so it is
+        dropped together with the state on _release_session_data."""
+        if self._panel_fragment_cache is None:
+            self._panel_fragment_cache = {}
+        return self._panel_fragment_cache
 
     def reset_escape_cache(self) -> None:
         """v1.7.0 (R2-01): invalidate the escaped-answer cache — call after
@@ -197,6 +258,8 @@ class UnifiedLinearState:
         )
         round_.elapsed_ms = elapsed
         round_.finalized = True
+        # v1.8.3: stable identity for the panel fragment cache.
+        round_.uid = next(_FRAGMENT_UID_SEQ)
         self.reasoning_rounds.append(round_)
         self._panel_events.append(("reasoning", len(self.reasoning_rounds) - 1))
         self._current_reasoning = ""
