@@ -332,20 +332,34 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
     def _fire_and_forget(self, coro: Coroutine[Any, Any, Any], loop: asyncio.AbstractEventLoop) -> None:
         """Schedule a coroutine for background execution without awaiting."""
+        # v1.8.3: loop.create_task() schedules via non-threadsafe call_soon —
+        # from a non-loop thread the callback is appended WITHOUT the
+        # self-pipe write, so a loop blocked in select() never wakes up and
+        # the coroutine silently stalls (FlushController.schedule_update
+        # already used call_soon_threadsafe correctly; this aligns the
+        # controller with it). Only take the create_task path when this IS
+        # the loop's thread; otherwise use run_coroutine_threadsafe, which
+        # wakes the loop.
         try:
-            task = loop.create_task(coro)
-            # Hold strong reference until task completes
-            self._pending_tasks.add(task)
-            task.add_done_callback(self._pending_tasks.discard)
+            on_loop_thread = asyncio.get_running_loop() is loop
         except RuntimeError:
-            # Loop might be closed — try run_coroutine_threadsafe as fallback
+            on_loop_thread = False
+        if on_loop_thread:
             try:
-                fut = asyncio.run_coroutine_threadsafe(coro, loop)
-                fut.add_done_callback(self._on_bg_task_done)
-            except Exception:
-                # v1.3.2 fix: close the coroutine to avoid 'never awaited' warning
-                coro.close()
-                _logger.debug("fire_and_forget failed", exc_info=True)
+                task = loop.create_task(coro)
+                # Hold strong reference until task completes
+                self._pending_tasks.add(task)
+                task.add_done_callback(self._pending_tasks.discard)
+                return
+            except RuntimeError:
+                pass  # loop closed between check and schedule — try threadsafe
+        try:
+            fut = asyncio.run_coroutine_threadsafe(coro, loop)
+            fut.add_done_callback(self._on_bg_task_done)
+        except Exception:
+            # v1.3.2 fix: close the coroutine to avoid 'never awaited' warning
+            coro.close()
+            _logger.debug("fire_and_forget failed", exc_info=True)
 
     def on_message_started(
         self,
@@ -1035,7 +1049,15 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                 len(content),
             )
         except Exception:
-            pass
+            # v1.8.3: was a bare `pass` — the last-resort delivery failing
+            # silently meant the user received nothing with zero log trace
+            # (same anti-pattern family as v1.7.0 R1-02/R1-04).
+            _logger.warning(
+                "text fallback failed: msg=%s reply_to=%s",
+                (session.message_id or "?")[:12],
+                (session.anchor_id or session.message_id or "?")[:12],
+                exc_info=True,
+            )
 
     def _prune_stale_sessions(self) -> None:
         """v1.1.1: 只清理已终态的过期 session，保护活跃 session."""
@@ -1087,8 +1109,16 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
 _controller: StreamCardController | None = None
 
+# v1.8.3: double-checked locking — two threads racing on the first call
+# previously created two controllers (two FeishuClients + split-brain
+# session stores). Every other shared structure in this module is already
+# lock-guarded; the singleton accessor was the last unguarded one.
+_controller_init_lock = threading.Lock()
+
 def get_controller() -> StreamCardController:
     global _controller
     if _controller is None:
-        _controller = StreamCardController()
+        with _controller_init_lock:
+            if _controller is None:
+                _controller = StreamCardController()
     return _controller
