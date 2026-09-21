@@ -10,7 +10,7 @@
 
 | 属性 | 值 |
 |------|-----|
-| 版本 | 1.6.0 (DEV) | 协议 | MIT | Python | ≥3.11 | 与上游 | ⚠️ **不兼容** |
+| 版本 | 1.8.2 (DEV) | 协议 | MIT | Python | ≥3.11 | 与上游 | ⚠️ **不兼容** |
 
 ---
 
@@ -27,7 +27,7 @@
             ├─ reasoning_callback ──── [Hook 6: on_reasoning_delta]
             ├─ tool_progress_callback [Hook 3: on_tool_updated]
             └─ background_review_cb ── [Hook 7: on_background_review]
-Cron: _deliver_result ── [Hook 10: on_cron_deliver] (async)
+Cron: _deliver_result ── (v1.7.0: 无 hook —— _wrap_cron_deliver 直接调 ctrl._do_cron_deliver；RELAY 部署走 RelayAdapter.send_for_platform 包装器)
 Background: _run_background_task ── [Hook 1/2]
 ```
 
@@ -109,11 +109,11 @@ Background: _run_background_task ── [Hook 1/2]
 
 **4.11 300313 错误码处理 (v1.1.0)**: 生产日志发现 `add_elements` 后 1s 内 `stream_element` 可能返回 300313（飞书服务端元素持久化传播延迟）。`cardkit_stream_element` 内置 200ms×3 次专用重试；drain/seal 阶段 300313 时 fallback 到 `partial_update_element` 写入 answer，避免 full rebuild 导致卡片闪烁。
 
-**4.12 并发限流 (v1.1.0)**: `on_message_started` 时 seal 同 chat_id 的旧活跃卡片为"被新消息取代"，防止多张活跃卡片竞争 API 调用。
+**4.12 并发限流 (v1.1.0; v1.8.1 话题隔离)**: `on_message_started` 时 seal 同隔离键的旧活跃卡片为"被新消息取代"，防止多张活跃卡片竞争 API 调用。v1.8.1 起隔离键为 `(thread_id or chat_id)`：飞书话题群/群内话题中不同话题是独立 hermes 会话，互不误封；话题内与普通群聊/私聊行为不变。
 
 **4.13 配置刷新 (v1.1.0)**: 不做自动 mtime 检测（避免每 token 一次 stat()）。配置刷新方式：`/aowen config reload` 命令立即生效，或重启网关生效。`Config.reload()` 清缓存。
 
-**4.14 /aowen 命令体系 (v1.1.0)**: `aowen/` 子包通过 `pre_gateway_dispatch` hook 拦截 `/aowen` 命令，直接回复飞书卡片，不经过 Hermes AI。命令：`/aowen help`、`/aowen status`（含配置折叠面板）、`/aowen monitor`、`/aowen monitor reset`、`/aowen config reload`。零后台内存占用。卡片视觉重构采用统一设计语言（banner→指标列→详情图标行→折叠→footer），颜色语义化（green=success/orange=warning/red=error/blue=info/grey=neutral），全部 column_set 用 flex_mode=stretch 实现响应式，只用 v2 安全标签，不引入 button/form_container/interactive_container。
+**4.14 /aowen 命令体系 (v1.1.0)**: `aowen/` 子包通过 `pre_gateway_dispatch` hook 拦截 `/aowen` 命令，直接回复飞书卡片，不经过 Hermes AI。命令：`/aowen help`、`/aowen status`（含配置折叠面板）、`/aowen monitor`、`/aowen monitor reset`、`/aowen config reload`。零后台内存占用。卡片视觉重构采用统一设计语言（banner→指标列→详情图标行→折叠→footer），颜色语义化（green=success/orange=warning/red=error/blue=info/grey=neutral），全部 column_set 用 flex_mode=stretch 实现响应式，只用 v2 安全标签，不引入 button/form_container/interactive_container。v1.8.0：monitor 新增"渠道健康"区（入站消息计数 + 最近入站时间）——lark SDK 重连预算耗尽后 WS 线程静默死亡、适配器仍报已连接，last_inbound 是唯一可观测的渠道活性信号；`monitor reset` 保留 last_inbound_at（渠道活性事实，非计数器）。
 
 **4.14.1 /aowen 中断场景提示卡 (v1.1.0)**: AI 回复中（agent 运行中）发送 /aowen 命令时，Hermes 网关走"agent 运行中"快速路径，未知 slash 命令（/aowen 不在白名单）会 fall through 到默认中断路径发给 LLM。借鉴 Hermes 原生 /model 命令的 "Agent is running — wait or /stop first" UX，在 `patching/gateway.py` 的 `_wrap_handle_message` 中检测此场景，发送 `build_interrupt_hint_card()`（橙色 header "AI 正在回复中"）并 return "" 阻止消息进入 agent。
 
@@ -230,11 +230,15 @@ v1.5.0 删除 IM 降级路径（生产从未触发）。CardKit v2 创建失败�
 
 ```yaml
 hermes_lark_streaming:
+  enabled: true                    # v1.7.0 文档化：插件总开关（默认 true）
+  linear: true                     # v1.7.0 文档化：线性模式（默认 true，唯一支持的路径，保留以兼容旧配置）
+  gateway_cards: true              # v1.7.0 文档化：gateway 内部消息转卡片（默认 true；false 时退纯文本）
   panel_expanded: false
   streaming_panel_expanded: false
   print_strategy: delay            # "fast" 或 "delay"
   print_step: 4                    # 打字机每次渲染字符数（默认4，范围1~10，需飞书7.23+）
-  flush_interval_ms: 200           # 插件发送间隔（默认200ms）
+  flush_interval_ms: 200           # 面板+答案混合刷新间隔（默认200ms，范围70~2000）
+  answer_flush_interval_ms: 150    # v1.7.0 新增：answer-only 快车道刷新间隔（默认150ms，原硬编码）
   card_ttl_sec: 600
   max_tool_steps: 20               # 范围 1~100
   max_reasoning_rounds: 20         # 范围 1~100
@@ -247,25 +251,31 @@ display:
   show_reasoning: true
 ```
 
+**凭据环境变量**（v1.7.0 文档化，优先于 config.yaml 的 feishu 节）：
+`FEISHU_APP_ID` / `FEISHU_APP_SECRET`（或 `LARK_APP_ID` / `LARK_APP_SECRET`），
+可选 `FEISHU_BASE_URL` / `LARK_BASE_URL`（默认 `https://open.feishu.cn/open-apis`，
+Lark 海外版设 `https://open.larksuite.com/open-apis`，或用 `FEISHU_DOMAIN=lark` 简写）。
+
 ---
 
-## 9. Hook 索引 (13 个注入点)
+## 9. Hook 索引 (12 个注入点)
+
+v1.7.0：`on_cron_deliver` 已删除（死代码——`_wrap_cron_deliver` 直接调 `ctrl._do_cron_deliver`，该 hook 从未被调用；grep 全仓 + hermes v0.20.5 源码交叉验证）。表格顺序与 `plugin.yaml provides_hooks` 一致（v1.7.0 勘误：此前两处顺序不一致）。
 
 | # | Hook | 签名 | 说明 |
 |---|------|------|------|
 | 0 | `pre_gateway_dispatch` | sync→dict | 消息分发前拦截（v1.1.0 新增）。返回 `{"action":"skip"}` 阻止消息进入 agent，用于 /aowen 命令 |
-| 1 | `on_feishu_normalize` | sync | 修正飞书引用消息虚假 thread_id |
+| 1 | `on_feishu_normalize` | sync | 修正飞书引用消息虚假 thread_id；v1.8.0 起兼作 WS 渠道活性脉冲（record_inbound → /aowen monitor 渠道健康区） |
 | 2 | `on_message_started` | sync | 创建 CardSession |
 | 3 | `on_message_completed` | sync→bool | 完成态卡片，返回是否已发卡片 |
-| 4 | `on_tool_updated` | sync | 工具调用状态更新 |
-| 5 | `on_answer_delta` | sync | AI 回复增量文本 |
-| 6 | `on_thinking_delta` | sync | 思考内容（被跳过防重复） |
-| 7 | `on_reasoning_delta` | sync | 原生推理增量 |
-| 8 | `on_background_review_message` | sync | 后台审查通知 |
-| 9 | `on_message_aborted` | sync | 消息异常终止 |
-| 10 | `on_message_interrupted` | sync | 新消息打断旧消息 |
-| 11 | `on_cron_deliver` | **async** | Cron 推送卡片 |
-| 12 | `on_message_completed`(bg) | sync | 后台任务卡片（复用 Hook 3，但用 task_id 作为 message_id，调用场景不同） |
+| 4 | `on_message_aborted` | sync | 消息异常终止 |
+| 5 | `on_message_interrupted` | sync | 新消息打断旧消息 |
+| 6 | `on_answer_delta` | sync | AI 回复增量文本 |
+| 7 | `on_thinking_delta` | sync | 思考内容（被跳过防重复） |
+| 8 | `on_reasoning_delta` | sync | 原生推理增量 |
+| 9 | `on_tool_updated` | sync | 工具调用状态更新 |
+| 10 | `on_background_review_message` | sync | 后台审查通知 |
+| 11 | `on_message_completed`(bg) | sync | 后台任务卡片（复用 Hook 3，但用 task_id 作为 message_id，调用场景不同） |
 
 ---
 
@@ -349,4 +359,4 @@ hermes gateway restart
 
 ---
 
-*Last updated: 2026-07-21 | Version: 1.6.0*
+*Last updated: 2026-09-08 | Version: 1.8.2*

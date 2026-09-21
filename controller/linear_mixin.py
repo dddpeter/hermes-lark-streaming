@@ -20,7 +20,11 @@ from ..cardkit import (
     build_preservative_seal_actions,
     _count_tag_objects,
     _enforce_card_element_limit,
+    # v1.7.0 (R2-12/R4): shared collapse-hint detection (bilingual-safe)
+    _is_collapse_hint_child,
 )
+# v1.7.0 (R4): bilingual collapse hint / truncation strings
+from ..cardkit.i18n import _T, _i18n
 from ..cardkit.md import _downgrade_tables, escape_markdown_asterisks, optimize_markdown_style
 from ..state.linear import UnifiedLinearState
 from ..state.text import split_reasoning_text
@@ -29,6 +33,7 @@ from ..feishu import (
     CARDKIT_SEQUENCE_CONFLICT,
     CARDKIT_STREAMING_CLOSED,
     FeishuAPIError,
+    extract_not_found_element_id,
     is_element_not_found_error,
     is_schema_error,
     is_terminal_api_code,
@@ -127,7 +132,14 @@ async def _fallback_write_answer(
         return False
 
 # NOTE: This is the *server-side flush interval* (how often we send
-_ANSWER_FAST_STREAM_MS = 0.150  # answer-only 节流间隔（150ms，v1.2.1 从 70ms 上调）
+# v1.7.0 (R2-09): the answer-only fast-lane interval is configurable via
+# hermes_lark_streaming.answer_flush_interval_ms (default 150ms) — was the
+# hardcoded _ANSWER_FAST_STREAM_MS.
+def _answer_fast_stream_sec(cfg: Any) -> float:
+    try:
+        return cfg.answer_flush_interval_sec
+    except Exception:
+        return 0.150
 
 class UnifiedControllerMixin:
     """Unified panel linear mode — phased card lifecycle."""
@@ -268,7 +280,7 @@ class UnifiedControllerMixin:
 
         _answer_only = state.answer_dirty and not state.panel_dirty and not state.tool_steps_dirty
         if _answer_only:
-            session.flush.set_throttle(_ANSWER_FAST_STREAM_MS)
+            session.flush.set_throttle(_answer_fast_stream_sec(self._cfg))
         else:
             session.flush.set_throttle(self._cfg.flush_interval_sec)
 
@@ -305,6 +317,8 @@ class UnifiedControllerMixin:
                     panel_events=state.panel_events,
                     max_tool_steps=self._cfg.max_tool_steps,
                     max_reasoning_rounds=self._cfg.max_reasoning_rounds,
+                    # v1.8.3: reuse rendered fragments of immutable items.
+                    fragment_cache=state.panel_fragment_cache(),
                 )
                 new_elements.append(panel)
 
@@ -312,11 +326,21 @@ class UnifiedControllerMixin:
             new_elements.append(_streaming_element(element_id=ANSWER_ELEMENT_ID))
 
             # Add new elements before loading hint
+            # v1.8.0 (P2-3): 若 hint 已被判定不存在（hint_removed / 已从
+            # existing_elements 移除），insert_before 继续锚 hint 只会在
+            # 重入路径（answer 跟踪被 Phase 3 自愈丢弃后重建）撞 300315。
+            # 退而锚 _LOADING_ELEMENT_ID（底部 loading icon，仅在 seal 时
+            # 删除——seal 自己就用它当 insert_before 目标，合法锚点）。
+            _insert_target = (
+                _LOADING_HINT_ELEMENT_ID
+                if _LOADING_HINT_ELEMENT_ID in session.existing_elements
+                else _LOADING_ELEMENT_ID
+            )
             actions.append({
                 "action": "add_elements",
                 "params": {
                     "type": "insert_before",
-                    "target_element_id": _LOADING_HINT_ELEMENT_ID,
+                    "target_element_id": _insert_target,
                     "elements": new_elements,
                 },
             })
@@ -367,17 +391,66 @@ class UnifiedControllerMixin:
                         state.panel_dirty = False
                         state.answer_dirty = False
                         state.tool_steps_dirty = False
+                        # v1.7.0 (R1-03): the add_elements that would have
+                        # replaced the loading hint was rejected PERMANENTLY.
+                        # Previously the dirty flags were cleared and nothing
+                        # else happened: the card kept animating its loading
+                        # hint and the whole answer was silently dropped.
+                        # Close streaming NOW so the card leaves the loading
+                        # state (close_streaming is idempotent and batch_update
+                        # still works after close — verified E2E), and let
+                        # _do_linear_complete deliver the answer via text
+                        # fallback (answer element never created → see the
+                        # R1-03 branch in _do_linear_complete).
+                        if not session._streaming_closed:
+                            try:
+                                session.sequence += 1
+                                await self._client.cardkit_close_streaming(
+                                    session.card_id,
+                                    sequence=session.sequence,
+                                    summary="",
+                                )
+                                session._streaming_closed = True
+                            except FeishuAPIError:
+                                _logger.debug(
+                                    "schema-error close_streaming failed card=%s",
+                                    session.card_id[:12],
+                                    exc_info=True,
+                                )
                         return
                     elif is_element_not_found_error(e):
+                        # v1.8.0 (P2-3): mirror the v1.4.1 Phase 3 fix.
+                        # Phase 2 的 batch 只引用 loading hint（insert_before
+                        # target + delete）——错误点到 hint 不存在时，唯一合
+                        # 理的解释是：同批次的上一次尝试已在服务端生效（answer
+                        # [+panel] 已插入、hint 已删除），但响应在网络层丢失
+                        # （timeout / SDK 瞬态重试），重发撞上 300315"not find
+                        # elementID"。batch_update 非幂等，这正是 07-02 生产
+                        # 事故链：本分支旧版清空 dirty 却不标记元素已创建 →
+                        # 之后的每次 flush 都全量重建 add_elements batch →
+                        # 300315 死循环 → answer 永远上不了卡片 → 完成时才靠
+                        # 文本兜底重发整条答案。
+                        # 修复：把跟踪状态再同步为服务端真实状态（answer 必在
+                        # 被生效的 batch 里——Path A/B 都会加它），保留 dirty
+                        # 标志并落穿到下方流式区，本次 flush 直接把待发内容
+                        # 写进已存在的元素。panel 存在极小概率误标记（生成期
+                        # race），由 Phase 3 处理器的 element-id 精确自愈兜底。
                         _logger.warning(
-                            "unified flush phase 2 element not found (non-fatal): %s card=%s",
+                            "unified flush phase 2 element not found — "
+                            "re-syncing creation state (prior batch likely "
+                            "applied server-side, non-idempotent retry "
+                            "collision): %s card=%s",
                             e, session.card_id[:12],
                         )
+                        session._creation_stages.add("answer")
+                        session.existing_elements.add(ANSWER_ELEMENT_ID)
+                        session._creation_stages.add("hint_removed")
                         session.existing_elements.discard(_LOADING_HINT_ELEMENT_ID)
-                        state.panel_dirty = False
-                        state.answer_dirty = False
-                        state.tool_steps_dirty = False
-                        return
+                        if _has_panel:
+                            session._creation_stages.add("panel")
+                            session.existing_elements.add(UNIFIED_PANEL_ELEMENT_ID)
+                        # 不清 panel_dirty / answer_dirty / tool_steps_dirty：
+                        # 落穿到本函数下半段的流式/Phase3 更新路径。
                     else:
                         # v1.3.3 fix (P0): transient API error (rate limit, auth
                         _logger.warning(
@@ -404,8 +477,10 @@ class UnifiedControllerMixin:
                     return
 
             # Note: skip markdown optimization during streaming for performance;
+            # v1.7.0 (R2-01): escaped_answer_view caches the escape incrementally
+            # (was: full-text escape on every flush).
             if state.answer_dirty:
-                content = escape_markdown_asterisks(state.answer_text or " ")
+                content = state.escaped_answer_view() or " "
                 session.sequence += 1
                 try:
                     await self._client.cardkit_stream_element(
@@ -436,6 +511,8 @@ class UnifiedControllerMixin:
                     panel_events=state.panel_events,
                     max_tool_steps=self._cfg.max_tool_steps,
                     max_reasoning_rounds=self._cfg.max_reasoning_rounds,
+                    # v1.8.3: reuse rendered fragments of immutable items.
+                    fragment_cache=state.panel_fragment_cache(),
                 )
                 actions.append({
                     "action": "partial_update_element",
@@ -460,6 +537,8 @@ class UnifiedControllerMixin:
                     panel_events=state.panel_events,
                     max_tool_steps=self._cfg.max_tool_steps,
                     max_reasoning_rounds=self._cfg.max_reasoning_rounds,
+                    # v1.8.3: reuse rendered fragments of immutable items.
+                    fragment_cache=state.panel_fragment_cache(),
                 )
                 actions.append({
                     "action": "add_elements",
@@ -526,6 +605,31 @@ class UnifiedControllerMixin:
                     # v1.4.1 fix (P1): Phase 3 batch_update 元素不存在 (300315 +
                     # warning 分支 → hint_removed 仍未同步 + existing_elements
                     # 重试。info 级别 (不是 warning/error) — 不是真正的故障。
+                    # v1.8.0 (P2-3): 错误消息点名的 elementID 现在被解析——
+                    # 若是 panel/answer 本体不存在，丢弃对应跟踪标记，让下轮
+                    # flush 走 add 路径重建该元素（自愈）；仅 hint 缺失时保持
+                    # v1.4.1 行为（同步 hint_removed + 保留 dirty 重试）。
+                    # 这同时兜底 Phase 2 再同步对 panel 的极小概率误标记。
+                    _nf = extract_not_found_element_id(e)
+                    if _nf == UNIFIED_PANEL_ELEMENT_ID:
+                        _logger.info(
+                            "unified flush phase 3 panel element not found — "
+                            "dropping panel tracking, will re-add next flush: %s card=%s",
+                            e, session.card_id[:12],
+                        )
+                        session._creation_stages.discard("panel")
+                        session.existing_elements.discard(UNIFIED_PANEL_ELEMENT_ID)
+                        # 保留 panel_dirty / tool_steps_dirty → add 路径重试
+                        return
+                    if _nf == ANSWER_ELEMENT_ID:
+                        _logger.info(
+                            "unified flush phase 3 answer element not found — "
+                            "dropping answer tracking, will re-create next flush: %s card=%s",
+                            e, session.card_id[:12],
+                        )
+                        session._creation_stages.discard("answer")
+                        session.existing_elements.discard(ANSWER_ELEMENT_ID)
+                        return
                     _logger.info(
                         "unified flush phase 3 element not found (non-fatal): %s — "
                         "syncing hint tracking, card=%s",
@@ -540,7 +644,8 @@ class UnifiedControllerMixin:
 
         # Note: skip markdown optimization during streaming for performance;
         if state.answer_dirty and "answer" in session._creation_stages:
-            content = escape_markdown_asterisks(state.answer_text or " ")
+            # v1.7.0 (R2-01): incremental escape cache (was full-text escape).
+            content = state.escaped_answer_view() or " "
             session.sequence += 1
             try:
                 await self._client.cardkit_stream_element(
@@ -675,7 +780,8 @@ class UnifiedControllerMixin:
 
                 # ── Flush remaining answer text ──
                 if state.answer_dirty and "answer" in session._creation_stages and not session._streaming_closed:
-                    content = escape_markdown_asterisks(state.answer_text or " ")
+                    # v1.7.0 (R2-01): incremental escape cache (was full-text escape).
+                    content = state.escaped_answer_view() or " "
                     try:
                         session.sequence += 1
                         _logger.info(
@@ -804,42 +910,51 @@ class UnifiedControllerMixin:
                     if hint_idx is None:
                         total_count += 1
                     trimmed_count = 0
+                    # v1.7.0 (R2-12): cache per-child tag counts — the old loop
+                    # re-counted every removed subtree on every pop.
+                    child_tag_counts = [_count_tag_objects([_c]) for _c in children]
                     while total_count > threshold and len(children) > 1:
-                        # Skip the collapse hint (first child if it contains "已折叠")
-                        remove_idx = 1 if children[0].get("content", "").endswith("已折叠") else 0
-                        removed = children.pop(remove_idx)
-                        total_count -= _count_tag_objects([removed])
+                        # Skip the collapse hint (first child when it is one)
+                        remove_idx = 1 if _is_collapse_hint_child(children[0]) else 0
+                        children.pop(remove_idx)
+                        total_count -= child_tag_counts.pop(remove_idx)
                         trimmed_count += 1
                     if trimmed_count > 0:
                         # Update or add collapse hint
                         # Re-find hint_idx (may have shifted due to removals)
                         hint_idx = None
                         for i, child in enumerate(children):
-                            if isinstance(child.get("content"), str) and "已折叠" in child["content"]:
+                            if _is_collapse_hint_child(child):
                                 hint_idx = i
                                 break
+                        _en_hint, _zh_hint = _T["collapse_hint_count"]
                         if hint_idx is not None:
-                            old_hint = children[hint_idx]["content"]
-                            # Parse existing trimmed count, then add new count
-                            # (same logic as _enforce_card_element_limit in cards.py)
-                            existing_count = 0
-                            _idx = old_hint.find("项")
-                            if _idx > 0:
-                                # Walk backwards skipping whitespace, then collect digits
-                                _end = _idx
-                                while _end > 0 and old_hint[_end - 1] == ' ':
-                                    _end -= 1
-                                _start = _end
-                                while _start > 0 and old_hint[_start - 1].isdigit():
-                                    _start -= 1
-                                if _start < _end:
-                                    existing_count = int(old_hint[_start:_end])
+                            old_hint = str(children[hint_idx].get("content", ""))
+                            # v1.7.0 (R4): sum ALL digit groups so both hint
+                            # formats count correctly — the seal format
+                            # "⚡ 还有 N 项已折叠" (one group) and the panel
+                            # builder format "⚡ 还有 X 轮早期推理、Y 步早期操作
+                            # 已折叠" (two groups whose SUM is the collapsed
+                            # total). The old "项"-anchored parser only
+                            # understood the seal format and silently dropped
+                            # the panel builder's already-collapsed count.
+                            existing_count = sum(
+                                int(_n) for _n in _re.findall(r"\d+", old_hint)
+                            )
                             total_trimmed = existing_count + trimmed_count
-                            children[hint_idx]["content"] = f"⚡ 还有 {total_trimmed} 项已折叠"
+                            children[hint_idx]["content"] = _zh_hint.format(total_trimmed)
+                            children[hint_idx]["i18n_content"] = _i18n(
+                                _en_hint.format(total_trimmed),
+                                _zh_hint.format(total_trimmed),
+                            )
                         else:
                             children.insert(0, {
                                 "tag": "markdown",
-                                "content": f"⚡ 还有 {trimmed_count} 项已折叠",
+                                "content": _zh_hint.format(trimmed_count),
+                                "i18n_content": _i18n(
+                                    _en_hint.format(trimmed_count),
+                                    _zh_hint.format(trimmed_count),
+                                ),
                                 "text_size": "notation",
                             })
                         # Update panel's elements
@@ -1006,6 +1121,16 @@ class UnifiedControllerMixin:
                 session._streaming_closed = True
             return False
         except Exception:
+            # v1.7.0 (R1-02): was a silent `return False` — any non-FeishuAPIError
+            # exception (network error after retries, programming error) left
+            # zero log evidence while the session was still marked
+            # CREATION_FAILED by the caller.
+            _logger.warning(
+                "preservative seal failed unexpectedly card=%s — session will "
+                "be marked CREATION_FAILED",
+                (card_id or "?")[:12],
+                exc_info=True,
+            )
             return False
 
     async def _do_linear_complete(self, session: CardSession) -> bool:
@@ -1083,12 +1208,25 @@ class UnifiedControllerMixin:
                         _logger.error("drain SCHEMA ERROR: %s — detail: %s", e, e.extract_schema_detail())
                         state.panel_dirty = False
                         state.tool_steps_dirty = False
+                    elif is_element_not_found_error(e):
+                        # v1.8.0 (P2-3): drain 的 partial_update 只引用 panel
+                        # 本体——元素不存在即 panel 已从服务端消失（例如 Phase 2
+                        # 再同步误标记的 race）。丢弃 panel 跟踪，避免后续 drain
+                        # 轮次重复打同一失败 partial_update（8 轮 warning 刷屏）。
+                        _logger.info(
+                            "drain panel element not found — dropping panel "
+                            "tracking: %s card=%s",
+                            e, (session.card_id or "?")[:12],
+                        )
+                        session._creation_stages.discard("panel")
+                        session.existing_elements.discard(UNIFIED_PANEL_ELEMENT_ID)
                     else:
                         _logger.warning("drain panel failed: %s", e)
 
             # ── Drain answer text ──
             if state.answer_dirty and "answer" in session._creation_stages:
-                content = escape_markdown_asterisks(state.answer_text or " ")
+                # v1.7.0 (R2-01): incremental escape cache (was full-text escape).
+                content = state.escaped_answer_view() or " "
                 try:
                     session.sequence += 1
                     _logger.info(
@@ -1128,7 +1266,15 @@ class UnifiedControllerMixin:
                         _logger.warning("HLS: drain answer failed: %s", e)
 
             if _drain_round < _MAX_DRAIN_ROUNDS - 1:
-                await asyncio.sleep(_DRAIN_YIELD_SEC)
+                # v1.7.0 (R2-07): yield ONLY when another round is actually
+                # needed — a clean drain used to pay a pointless 20ms sleep
+                # on every round (and up to 8 sleeps on the happy path where
+                # round 1 already cleared everything).
+                if (
+                    state is not None
+                    and (state.answer_dirty or state.panel_dirty or state.tool_steps_dirty)
+                ):
+                    await asyncio.sleep(_DRAIN_YIELD_SEC)
 
         # ── Final drain check: log warning if dirty data remains ──
         if state is not None and (state.answer_dirty or state.panel_dirty or state.tool_steps_dirty):
@@ -1191,14 +1337,50 @@ class UnifiedControllerMixin:
             # v1.3.4 fix (P1): 如果会话已被 on_aborted 标记为 ABORTED，
             if session._was_aborted:
                 session.state = ABORTED
+                # v1.7.0 (R3-01): record terminal reason/source + bump epoch
+                # on the most common terminal path (previously only
+                # CREATION_FAILED/TERMINATED called enter_terminal).
+                session.enter_terminal(
+                    reason=TerminalReason.ABORT,
+                    source="_do_linear_complete",
+                )
             else:
                 session.state = COMPLETED
+                session.enter_terminal(
+                    reason=TerminalReason.NORMAL,
+                    source="_do_linear_complete",
+                )
+            # v1.7.0 (R1-03): if the answer element was never created (Phase 2
+            # SCHEMA ERROR mid-stream), the card shows no answer at all —
+            # snapshot the text BEFORE releasing state and deliver it as a
+            # plain text reply so the user still gets the response.
+            _lost_answer = ""
+            if (
+                state is not None
+                and state.answer_text
+                and "answer" not in session._creation_stages
+            ):
+                _lost_answer = state.answer_text
             # v1.1.1: 释放重数据（unified_state/text/tool_use），减少内存占用
             # session 留最小元数据等 _prune_stale_sessions 清理
             try:
                 self._release_session_data(session)
             except Exception:
                 _logger.debug("HLS: release session data failed", exc_info=True)
+            if _lost_answer:
+                _logger.warning(
+                    "linear complete: answer element never created (schema "
+                    "error?) — delivering answer via text fallback msg=%s len=%d",
+                    (session.message_id or "?")[:12], len(_lost_answer),
+                )
+                try:
+                    await self._send_text_fallback(session, fallback_text=_lost_answer)
+                except Exception:
+                    _logger.warning(
+                        "linear complete: lost-answer text fallback failed msg=%s",
+                        (session.message_id or "?")[:12],
+                        exc_info=True,
+                    )
             # v1.1.0: Record metrics
             try:
                 from ..aowen import record_card_completed

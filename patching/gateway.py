@@ -14,6 +14,7 @@ from . import (
     _started_msg_ids_lock,
     _thread_local_ctx,
     _logger,
+    _send_result_ok,
 )
 
 # ── GatewayRunner method wrappers ──────────────────────────────────
@@ -74,22 +75,35 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
         mid = event.message_id
         anchor_id = self._reply_anchor_for_event(event)
         chat_id = source.chat_id if hasattr(source, "chat_id") else ""
+        # v1.8.1 (P1): 飞书话题隔离键。on_feishu_normalize（_handle_message
+        # 顶部）已先行修正引用消息的虚假 thread_id，此处读到的是真实值。
+        thread_id = getattr(source, "thread_id", None)
+        # v1.8.1 (P1): START 钩子只对飞书渠道生效。此前无平台过滤：QQ/
+        # Telegram 等其它渠道的消息也会创建流式卡会话，卡片创建时对
+        # 非 om_ 消息 id 调 reply 必然失败，会话停在 CREATION_FAILED（终
+        # 态、无泄漏，但每次都刷错误日志且纯飞书部署外的多渠道部署不可
+        # 用）。源头堵：非飞书消息不建会话；下游回调包装器因查不到会话
+        # 自然放行纯文本回复，行为不变。
+        _platform_name = getattr(getattr(source, "platform", None), "value", "").lower()
+        _is_feishu = _platform_name in ("feishu", "lark")
 
         # Track this message as started (for interrupt detection)
         with _started_msg_ids_lock:
             _started_msg_ids.add(mid)
 
         # ── START hook ──
-        try:
-            from .hooks import on_message_started
+        if _is_feishu:
+            try:
+                from .hooks import on_message_started
 
-            on_message_started(
-                message_id=mid,
-                chat_id=chat_id,
-                anchor_id=anchor_id,
-            )
-        except Exception:
-            _logger.warning("HLS: suppressed exception", exc_info=True)
+                on_message_started(
+                    message_id=mid,
+                    chat_id=chat_id,
+                    anchor_id=anchor_id,
+                    thread_id=thread_id,
+                )
+            except Exception:
+                _logger.warning("HLS: suppressed exception", exc_info=True)
         msg_context = {
             "message_id": mid,
             "chat_id": chat_id,
@@ -181,6 +195,7 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
                             new_message_id=_interrupt_new_mid,
                             chat_id=chat_id,
                             anchor_id=anchor_id,
+                            thread_id=thread_id,
                         )
                     except Exception:
                         _logger.warning("HLS: suppressed exception", exc_info=True)
@@ -266,6 +281,9 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                 _thread_local_ctx.data = dict(ctx)
 
                 # anchor_id fix: use event_message_id as the new card's
+                # v1.8.1 (P1): interrupt 链路同样传递话题隔离键，新卡归入
+                # 新消息所属话题。
+                _src_thread_id = getattr(source, "thread_id", None)
                 try:
                     from .hooks import on_message_interrupted
                     on_message_interrupted(
@@ -273,6 +291,7 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                         new_message_id=event_message_id,
                         chat_id=ctx["chat_id"],
                         anchor_id=event_message_id,
+                        thread_id=_src_thread_id,
                     )
                 except Exception:
                     _logger.debug("run_agent: interrupt hook failed", exc_info=True)
@@ -284,6 +303,7 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                         message_id=event_message_id,
                         chat_id=ctx["chat_id"],
                         anchor_id=event_message_id,
+                        thread_id=_src_thread_id,
                     )
                 except Exception:
                     _logger.warning("HLS: suppressed exception", exc_info=True)
@@ -319,6 +339,47 @@ def _wrap_run_agent(orig: Callable) -> Callable:
         # Previous bug: only A's ABORTED COMPLETE was fired, leaving
         # - B's card quotes A's text (stale session content)
         ctx = _msg_ctx.get()
+        # v1.8.1 (P1): hermes _run_agent 捕获 agent 异常后返回错误**字符串**
+        # （run.py except 分支 "Sorry, I encountered an unexpected error..."）
+        # 而非 result dict。回合已结束但 message.completed 从未触发——若不
+        # 在这里封卡，流式卡永转圈、会话非终态永不回收（泄漏）。用错误
+        # 字符串作为 error_message 封卡，语义与 dict 路径的 error 字段
+        # 一致。封卡成功置 card_sent，外层 _handle_message_with_agent 的
+        # 既有抑制机制自然接管（错误文本已上卡，不再重复发纯文本）。
+        if isinstance(result, str):
+            _ctx_for_error = ctx or _saved_parent_ctx
+            if _ctx_for_error is not None:
+                try:
+                    from .hooks import on_message_completed
+
+                    _err_elapsed = time.monotonic() - _ctx_for_error.get(
+                        "_msg_start_time", time.monotonic()
+                    )
+                    _sealed = on_message_completed(
+                        message_id=_ctx_for_error.get("message_id", ""),
+                        answer="",
+                        duration=_err_elapsed,
+                        error_message=result,
+                        aborted=False,
+                    )
+                    if _sealed:
+                        _ctx_for_error["card_sent"] = True
+                        _logger.info(
+                            "run_agent: sealed card with error string result "
+                            "msg=%s len=%d",
+                            (_ctx_for_error.get("message_id") or "?")[:12],
+                            len(result),
+                        )
+                except Exception:
+                    _logger.warning(
+                        "run_agent: error-string seal failed", exc_info=True
+                    )
+            # 递归中断场景：返回前恢复父上下文（与下方完整路径一致，
+            # 否则后续同线程消息错拿 child 上下文）。
+            if _saved_parent_ctx is not None:
+                _msg_ctx.set(_saved_parent_ctx)
+                _thread_local_ctx.data = dict(_saved_parent_ctx)
+            return result
         if _saved_parent_ctx is not None:
             # Step 1: Fire B's (child) COMPLETE hook normally
             if ctx is not None:
@@ -531,19 +592,31 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
     """Inject START/COMPLETE hooks for ``/background`` tasks so they get streaming cards."""
 
     @functools.wraps(orig)
-    async def wrapper(self, prompt, source, task_id, **kwargs):
+    async def wrapper(self, prompt, source, task_id, event_message_id=None, **kwargs):
         # Only intercept Feishu platform
         platform_name = getattr(getattr(source, "platform", None), "value", "").lower()
         if platform_name not in ("feishu", "lark"):
-            return await orig(self, prompt, source, task_id, **kwargs)
+            return await orig(
+                self, prompt, source, task_id,
+                event_message_id=event_message_id, **kwargs,
+            )
 
         chat_id = getattr(source, "chat_id", "")
+        # v1.8.1 (P2): hermes 的 /bg 命令处理器把用户消息的回复锚
+        # （om_ 消息 id）作为 event_message_id 传入（slash_commands.py
+        # _handle_background_command → _run_background_task）。此前包装器
+        # 签名未显式接收，被 **kwargs 吞掉后 START hook 只拿 task_id
+        # （bg_HHMMSS_hex 合成 id）建卡——卡片 reply 对非 om_ id 必然
+        # 失败，/bg 从引入以来从未真正出过流式卡。现在把它作为卡片的
+        # 回复锚传下去；旧版 hermes 不传该参数时退回旧行为（无锚）。
+        _bg_anchor = event_message_id or None
+        _bg_thread_id = getattr(source, "thread_id", None)
 
         # Set up message context so _maybe_wrap_callbacks works
         _msg_ctx.set({
             "message_id": task_id,
             "chat_id": chat_id,
-            "anchor_id": None,  # No reply anchor for background tasks
+            "anchor_id": _bg_anchor,
             "event_message_id": task_id,  # Use task_id so callbacks find a valid eid
             "card_sent": False,
             "_msg_start_time": time.monotonic(),
@@ -554,7 +627,12 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
         # ── Fire START hook ──
         try:
             from .hooks import on_message_started
-            on_message_started(message_id=task_id, chat_id=chat_id, anchor_id=None)
+            on_message_started(
+                message_id=task_id,
+                chat_id=chat_id,
+                anchor_id=_bg_anchor,
+                thread_id=_bg_thread_id,
+            )
         except Exception:
             _logger.debug("background task START hook failed", exc_info=True)
 
@@ -587,7 +665,10 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
 
         # v1.3.4 fix (P1): orig() + COMPLETE hook 都在 try 块内，finally
         try:
-            result = await orig(self, prompt, source, task_id, **kwargs)
+            result = await orig(
+                self, prompt, source, task_id,
+                event_message_id=event_message_id, **kwargs,
+            )
 
             # ── Fire COMPLETE hook ──
             ctx = _msg_ctx.get()
@@ -641,7 +722,13 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
             return result
         finally:
             if original_send and adapter:
-                adapter.send = original_send
+                # v1.7.0 (R1-08): restore only what WE installed. With two
+                # concurrent background tasks on one adapter, task A's old
+                # `adapter.send = original_send` clobbered task B's still-live
+                # wrapper mid-flight (B's interception silently died). Only
+                # restore when our wrapper is still the active attribute.
+                if getattr(adapter, "send", None) is _intercepting_send:
+                    adapter.send = original_send
                 # v1.3.2 fix (B3-06): default to 0 (not 1) for consistency —
                 # a counter should never default to 1 when decrementing.
                 adapter._hls_bg_sending = getattr(adapter, '_hls_bg_sending', 0) - 1
@@ -676,10 +763,38 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
             pass
 
         if feishu_adapter is None:
+            # v1.7.0 (P1 RELAY fix): relay-fronted deployment — there is no
+            # native FeishuAdapter in ``adapters`` (the connector process owns
+            # the credentials). Cron cards are handled by the class-level
+            # RelayAdapter.send_for_platform wrapper, which detects hermes'
+            # cron delivery metadata (job_id) and redirects to the cron card
+            # (see patching/adapter.py _dispatch_feishu_outbound). Just log
+            # and pass through to hermes' normal delivery.
+            try:
+                from gateway.config import Platform as _Platform
+
+                _relay = adapters.get(_Platform.RELAY) if adapters else None
+                if (
+                    _relay is not None
+                    and callable(getattr(_relay, "fronts_platform", None))
+                    and _relay.fronts_platform("feishu")
+                ):
+                    _logger.info(
+                        "hermes-lark-streaming v%s: cron delivery on RELAY lane "
+                        "(no native feishu adapter; card redirect happens at "
+                        "RelayAdapter.send_for_platform, job=%s)",
+                        __version__,
+                        job.get("id", "?")[:12],
+                    )
+            except Exception:
+                _logger.debug("HLS: relay lane detection failed", exc_info=True)
             return orig(job, content, adapters=adapters, loop=loop, **kwargs)
 
-        _logger.info(
-            "hermes-lark-streaming v%s: cron delivery intercepted, redirecting to card (job=%s)",
+        _logger.debug(
+            # v1.8.0 (P2-2): 旧文案 "cron delivery intercepted"（拦截）误导操作
+            # 者以为消息被阻断；且每次推送都打 INFO。改为中性描述 + debug。
+            "hermes-lark-streaming v%s: cron delivery redirected to streaming "
+            "card (job=%s)",
             __version__,
             job.get("id", "?")[:12],
         )
@@ -692,7 +807,7 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
             try:
                 from ..controller import get_controller
                 ctrl = get_controller()
-                _logger.info(
+                _logger.debug(
                     "cron _card_sending_send: ctrl.enabled=%s chat=%s content_len=%d",
                     ctrl.enabled,
                     chat_id[:12] if chat_id else "?",
@@ -712,13 +827,16 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
                     )
                     # Return a success result so the original _deliver_result
                     # thinks the send succeeded
-                    try:
-                        from gateway.platforms.base import SendResult
-                        return SendResult(success=True)
-                    except (ImportError, AttributeError):
-                        return None
+                    return _send_result_ok()
             except Exception:
-                pass
+                # v1.7.0: was a bare `pass` — a failed cron card silently fell
+                # back to plain text with zero log evidence.
+                _logger.warning(
+                    "cron _card_sending_send: card delivery failed, falling "
+                    "back to plain text chat=%s",
+                    (chat_id or "?")[:12],
+                    exc_info=True,
+                )
 
             # Fallback: send plain text via the original adapter
             return await original_send(chat_id, content, **send_kwargs)
@@ -729,7 +847,11 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
         try:
             return orig(job, content, adapters=adapters, loop=loop, **kwargs)
         finally:
-            feishu_adapter.send = original_send
+            # v1.7.0 (R1-08): same conditional-restore as the bg-task wrapper —
+            # concurrent cron deliveries on one adapter must not clobber each
+            # other's interception.
+            if getattr(feishu_adapter, "send", None) is _card_sending_send:
+                feishu_adapter.send = original_send
             # v1.3.2 fix (B3-06): default to 0 (not 1) for consistency.
             feishu_adapter._hls_cron_sending = getattr(feishu_adapter, '_hls_cron_sending', 0) - 1
 

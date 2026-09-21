@@ -46,6 +46,7 @@ __all__ = [
     'build_panel_header',
     'build_panel_children',
     '_count_tag_objects',
+    '_is_collapse_hint_child',
 ]
 
 _IMG_MD_PATTERN = re.compile(r"!\[([^\]]*)\]\((img_[^)\s]+)\)")
@@ -216,8 +217,11 @@ def build_panel_header(*, reasoning_rounds: list, current_reasoning_text: str = 
         en_parts.append(elapsed_str)
         zh_parts.append(elapsed_str)
 
-    en_full = " · ".join(en_parts)
-    zh_full = " · ".join(zh_parts)
+    # Tech-style: pipe separator + ▶ prefix on the unified-panel header so
+    # the panel reads like a process pipeline rather than a marketing badge.
+    prefix = _T["footer_panel_prefix"][1]
+    en_full = f"{prefix}" + " │ ".join(en_parts)
+    zh_full = f"{prefix}" + " │ ".join(zh_parts)
 
     title_el = {
         "tag": "plain_text",
@@ -244,16 +248,87 @@ def build_panel_header(*, reasoning_rounds: list, current_reasoning_text: str = 
 
 _REASONING_DISPLAY_LIMIT = 2000  # 单条推理文本最大显示字数
 
+# v1.8.3: panel fragment cache — rendered elements of IMMUTABLE panel items
+# (finalized reasoning rounds, finished tool steps) are cached and reused
+# across flushes. During a reasoning stream every delta sets panel_dirty and
+# rebuilds the whole panel; without the cache all immutable items were
+# re-rendered (regex truncation + detail sanitize + code-fence scan) on every
+# 80ms flush. Streaming paths pass a per-session cache (see
+# UnifiedLinearState.panel_fragment_cache); seal/drain paths pass None —
+# they MUTATE panel children (trimming) and must never share objects with
+# the streaming cache.
+_FRAGMENT_CACHE_MAX = 512
+
+def _put_fragment(cache: dict, key, value: list[dict]) -> None:
+    """Insert with simple FIFO eviction — bounded memory for marathon sessions."""
+    if len(cache) >= _FRAGMENT_CACHE_MAX:
+        cache.pop(next(iter(cache)), None)
+    cache[key] = value
+
+def _get_or_render_fragment(
+    fragment_cache: dict | None,
+    key: tuple | None,
+    render,
+) -> list[dict]:
+    """key=None means uncachable (running step / uid-less legacy item)."""
+    if fragment_cache is None or key is None:
+        return render()
+    frag = fragment_cache.get(key)
+    if frag is None:
+        frag = render()
+        _put_fragment(fragment_cache, key, frag)
+    return frag
+
+def _round_fragment(round_) -> list[dict]:
+    """Render one finalized reasoning round (title + optional text div)."""
+    els: list[dict] = [_build_reasoning_round_title(
+        round_.index, round_.elapsed_ms, finalized=True,
+    )]
+    if round_.text.strip():
+        els.append({
+            "tag": "div",
+            "margin": "0px 0px 0px 22px",
+            "text": {
+                "tag": "lark_md",
+                "content": _truncate_reasoning(round_.text),
+                "text_size": "notation",
+            },
+        })
+    return els
+
+def _is_collapse_hint_child(child: Any) -> bool:
+    """Whether a panel child is the collapsed-items hint (bilingual-safe).
+
+    Matches BOTH hint spellings — the seal format ("⚡ 还有 N 项已折叠" /
+    "⚡ N items collapsed") and the panel-builder format ("⚡ 还有 X 轮早期推理、
+    Y 步早期操作已折叠"). Length-guarded so a real reasoning round that merely
+    mentions collapse words is never mistaken for the hint.
+    """
+    if not isinstance(child, dict):
+        return False
+    content = child.get("content", "")
+    if not isinstance(content, str) or not content.startswith("⚡") or len(content) > 80:
+        return False
+    return "已折叠" in content or "collapse" in content.lower()
+
 def _truncate_reasoning(text: str) -> str:
     """截断过长推理文本至 _REASONING_DISPLAY_LIMIT."""
     if len(text) <= _REASONING_DISPLAY_LIMIT:
         return text
-    suffix = "\n\n... (已截断，共 {} 字)".format(len(text))
-    return text[:_REASONING_DISPLAY_LIMIT - len(suffix)] + suffix
+    # v1.7.0 (R4): suffix was zh-hardcoded ("已截断，共 N 字") — bilingual now.
+    en_suffix, zh_suffix = _T["truncated_suffix"]
+    suffix = zh_suffix.format(len(text))
+    truncated = text[:_REASONING_DISPLAY_LIMIT - len(suffix)] + suffix
+    return truncated
 
-def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str = "", tool_steps: list[dict], show_reasoning: bool = True, panel_events: list[tuple[str, int]] | None = None, max_tool_steps: int = 20, max_reasoning_rounds: int = 20) -> list[dict]:
+def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str = "", tool_steps: list[dict], show_reasoning: bool = True, panel_events: list[tuple[str, int]] | None = None, max_tool_steps: int = 20, max_reasoning_rounds: int = 20, fragment_cache: dict | None = None) -> list[dict]:
     """Build child elements for unified panel body. Renders chronologically (panel_events)
-    or sequentially (fallback). Trims to max_* limits (Feishu 200-element cap)."""
+    or sequentially (fallback). Trims to max_* limits (Feishu 200-element cap).
+
+    v1.8.3: fragment_cache — when provided, rendered elements of immutable
+    items (finalized rounds keyed ("r", uid); finished tool steps keyed
+    ("s", uid)) are reused across builds. Running steps and uid-less items
+    always render fresh."""
     trimmed_rounds = 0
     trimmed_tools = 0
 
@@ -284,15 +359,25 @@ def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str 
     children: list[dict] = []
 
     if trimmed_rounds > 0 or trimmed_tools > 0:
-        collapse_parts: list[str] = []
+        # v1.7.0 (R4): collapse hint was zh-hardcoded — bilingual now. Digit
+        # groups in BOTH spellings sum to the collapsed total, which the
+        # seal-time re-trim in linear_mixin relies on.
+        en_parts: list[str] = []
+        zh_parts: list[str] = []
         if trimmed_rounds > 0:
-            collapse_parts.append(f"{trimmed_rounds} 轮早期推理")
+            en_r, zh_r = _T["collapse_rounds"]
+            en_parts.append(en_r.format(trimmed_rounds))
+            zh_parts.append(zh_r.format(trimmed_rounds))
         if trimmed_tools > 0:
-            collapse_parts.append(f"{trimmed_tools} 步早期操作")
-        collapse_text = "⚡ 还有 " + "、".join(collapse_parts) + "已折叠"
+            en_t, zh_t = _T["collapse_tools"]
+            en_parts.append(en_t.format(trimmed_tools))
+            zh_parts.append(zh_t.format(trimmed_tools))
+        en_hint = _T["collapse_hint_full"][0].format(", ".join(en_parts))
+        zh_hint = _T["collapse_hint_full"][1].format("、".join(zh_parts))
         children.append({
             "tag": "markdown",
-            "content": collapse_text,
+            "content": zh_hint,
+            "i18n_content": _i18n(en_hint, zh_hint),
             "text_size": "notation",
         })
 
@@ -301,23 +386,20 @@ def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str 
         for kind, idx in panel_events:
             if kind == "reasoning" and show_reasoning and idx < len(reasoning_rounds):
                 round_ = reasoning_rounds[idx]
-                children.append(_build_reasoning_round_title(
-                    round_.index, round_.elapsed_ms, finalized=True,
+                children.extend(_get_or_render_fragment(
+                    fragment_cache,
+                    ("r", round_.uid) if round_.uid else None,
+                    lambda r=round_: _round_fragment(r),
                 ))
-                if round_.text.strip():
-                    children.append({
-                        "tag": "div",
-                        "margin": "0px 0px 0px 22px",
-                        "text": {
-                            "tag": "lark_md",
-                            "content": _truncate_reasoning(round_.text),
-                            "text_size": "notation",
-                        },
-                    })
             elif kind == "tool" and idx < len(tool_steps):
                 if idx not in rendered_tools:
                     step = tool_steps[idx]
-                    children.extend(_build_tool_step_elements(step))
+                    uid = step.get("uid") or 0
+                    children.extend(_get_or_render_fragment(
+                        fragment_cache,
+                        ("s", uid) if uid and step.get("status") != "running" else None,
+                        lambda s=step: _build_tool_step_elements(s),
+                    ))
                     rendered_tools.add(idx)
 
         # In-progress reasoning.
@@ -349,19 +431,11 @@ def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str 
         )
         if has_reasoning:
             for round_ in reasoning_rounds:
-                children.append(_build_reasoning_round_title(
-                    round_.index, round_.elapsed_ms, finalized=True,
+                children.extend(_get_or_render_fragment(
+                    fragment_cache,
+                    ("r", round_.uid) if round_.uid else None,
+                    lambda r=round_: _round_fragment(r),
                 ))
-                if round_.text.strip():
-                    children.append({
-                        "tag": "div",
-                        "margin": "0px 0px 0px 22px",
-                        "text": {
-                            "tag": "lark_md",
-                            "content": _truncate_reasoning(round_.text),
-                            "text_size": "notation",
-                        },
-                    })
 
             # In-progress reasoning.
             if current_reasoning_text:
@@ -382,14 +456,19 @@ def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str 
 
         # Tool steps.
         for step in tool_steps:
-            children.extend(_build_tool_step_elements(step))
+            uid = step.get("uid") or 0
+            children.extend(_get_or_render_fragment(
+                fragment_cache,
+                ("s", uid) if uid and step.get("status") != "running" else None,
+                lambda s=step: _build_tool_step_elements(s),
+            ))
 
     if not children:
         children.append({"tag": "markdown", "content": " "})
 
     return children
 
-def build_unified_panel(*, reasoning_rounds: list, current_reasoning_text: str = "", tool_steps: list[dict], tool_elapsed_ms: float = 0, show_reasoning: bool = True, expanded: bool = False, element_id: str | None = None, panel_events: list[tuple[str, int]] | None = None, max_tool_steps: int = 20, max_reasoning_rounds: int = 20) -> dict:
+def build_unified_panel(*, reasoning_rounds: list, current_reasoning_text: str = "", tool_steps: list[dict], tool_elapsed_ms: float = 0, show_reasoning: bool = True, expanded: bool = False, element_id: str | None = None, panel_events: list[tuple[str, int]] | None = None, max_tool_steps: int = 20, max_reasoning_rounds: int = 20, fragment_cache: dict | None = None) -> dict:
     """Build full unified panel. Thin assembler over build_panel_header/children."""
     header = build_panel_header(
         reasoning_rounds=reasoning_rounds,
@@ -406,6 +485,7 @@ def build_unified_panel(*, reasoning_rounds: list, current_reasoning_text: str =
         panel_events=panel_events,
         max_tool_steps=max_tool_steps,
         max_reasoning_rounds=max_reasoning_rounds,
+        fragment_cache=fragment_cache,
     )
     panel = {
         "tag": "collapsible_panel",
@@ -433,20 +513,25 @@ def _build_tool_step_title(step: dict) -> dict:
     status = step.get("status", "running")
     status_info = _tool_status_info(status)
     title = step.get("title", step.get("name", "tool"))
-    content = f"<font color='{status_info['color']}'>**{_escape_md(title)}**</font>"
-    return {
-        "tag": "div",
-        "icon": {
-            "tag": "standard_icon",
-            "token": step.get("icon", "tool_02"),
-            "color": "grey",
-        },
-        "text": {
-            "tag": "lark_md",
-            "content": content,
-            "text_size": "notation",
-        },
-    }
+    # Map terminal-status word → single-glyph prefix. The glyph replaces the
+    # leading icon visually, so we keep the icon slot for terminal states
+    # only; running keeps its icon so the user sees motion.
+    glyph_key = {
+        "running": "tool_running_glyph",
+        "success": "tool_success_glyph",
+        "error": "tool_error_glyph",
+    }.get(status)
+    glyph = _T[glyph_key][1] if glyph_key else ""
+
+    div: dict = {"tag": "div"}
+    if status == "running":
+        # running: keep icon (motion cue) + glyph prefix
+        div["icon"] = {"tag": "standard_icon", "token": step.get("icon", "tool_02"), "color": "grey"}
+    # success/error: drop icon entirely — the glyph + colour carry the meaning.
+
+    content = f"<font color='{status_info['color']}'>{glyph}**{_escape_md(title)}**</font>"
+    div["text"] = {"tag": "lark_md", "content": content, "text_size": "notation"}
+    return div
 
 def _build_reasoning_round_title(round_index: int, elapsed_ms: float, finalized: bool, failed: bool = False) -> dict:
     """构建推理轮次标题 div. Colors: 进行中 orange-300, 已完成 green, 失败 red."""
@@ -463,7 +548,10 @@ def _build_reasoning_round_title(round_index: int, elapsed_ms: float, finalized:
     if elapsed:
         text += f" · {elapsed}"
 
-    content = f"<font color='{color}'>**{text}**</font>"
+    # Tech-style leading glyph: ▸ (chevron) reinforces the agent-loop pipeline
+    # vibe without adding noise — it's a single ASCII-ish glyph, not a banner.
+    prefix = _T["footer_round_prefix"][1]
+    content = f"<font color='{color}'>**{prefix}{text}**</font>"
     return {
         "tag": "div",
         "icon": {
@@ -549,8 +637,18 @@ def _build_error_panel(error_message: str, *, is_aborted: bool = False, expanded
     if is_aborted:
         en_label, zh_label = _T["interrupt_panel"]
         border_color = "orange"
-        body_content = error_message
-        body_i18n = None  # 中断消息无需 i18n
+        # v1.7.0 (R4): known interrupt reasons render bilingually — the raw
+        # hermes/hermes-lark-streaming message stays as the content default.
+        _interrupt_msg_map = {
+            _T["interrupt_by_new_message"][0]: _T["interrupt_by_new_message"],
+        }
+        _known = _interrupt_msg_map.get(error_message)
+        if _known is not None:
+            body_content = _known[1]
+            body_i18n = _i18n(_known[0], _known[1])
+        else:
+            body_content = error_message
+            body_i18n = None  # 未知中断消息不做猜测翻译
     else:
         en_label, zh_label = _T["error_panel"]
         border_color = "red"
@@ -643,8 +741,11 @@ def _build_footer_elements(
                 if zh:
                     zh_parts.append(zh)
         if en_parts:
-            en_lines.append(" · ".join(en_parts))
-            zh_lines.append(" · ".join(zh_parts))
+            # Use Unicode pipe with spaces as the field separator. This is
+            # the same glyph you see in `ls -l | grep ...` and `ps aux | head`
+            # — a deliberate terminal-pipeline vibe, less flowery than `·`.
+            en_lines.append(" │ ".join(en_parts))
+            zh_lines.append(" │ ".join(zh_parts))
 
     if not en_lines:
         return []
@@ -766,12 +867,18 @@ def _render_footer_field(
     is_aborted: bool,
     show_label: bool,
 ) -> tuple[str | None, str | None]:
+    # Tech-style status prefix: emoji + short label, restrained.
+    # The downstream caller wraps the entire row in red on error, so per-field
+    # colouring would be redundant here. We only override the *glyph* for the
+    # three terminal states.
     if name == "status":
         if is_error:
-            return _T["status_error"]
+            # The downstream red-wrap plus the emoji carry the meaning; we
+            # don't repeat "Error" inside the glyph.
+            return _T["footer_status_err"]
         if is_aborted:
-            return _T["status_stopped"]
-        return _T["status_completed"]
+            return _T["footer_status_stopped"]
+        return _T["footer_status_done"]
 
     if name == "elapsed":
         duration = data.get("duration", 0)
@@ -779,21 +886,29 @@ def _render_footer_field(
             val = _format_elapsed(duration * 1000)
             if show_label:
                 return _T["elapsed"][0].format(val), _T["elapsed"][1].format(val)
-            return val, val
+            # Wrap value in inline-code so it visually pops against prose
+            # labels (mimics terminal / IDE logs). Card markdown has no
+            # <code> tag — backticks are the only inline-code syntax.
+            return f"`{val}`", f"`{val}`"
         return None, None
 
     if name == "model":
         v = data.get("model") or None
-        return v, v
+        if not v:
+            return None, None
+        # Inline-code the model name to anchor it visually — same trick as
+        # elapsed: prose fields vs. monospace values.
+        tagged = f"`{_escape_md(v)}`"
+        return tagged, tagged
 
     if name == "tokens":
         input_t = data.get("input_tokens", 0) or 0
         output_t = data.get("output_tokens", 0) or 0
         reasoning_t = data.get("reasoning_tokens", 0) or 0
         if input_t or output_t:
-            v = f"↑ {_compact(input_t)} ↓ {_compact(output_t)}"
+            v = f"↑`{_compact(input_t)}` ↓`{_compact(output_t)}`"
             if reasoning_t:
-                v += f" 💭 {_compact(reasoning_t)}"
+                v += f" 💭`{_compact(reasoning_t)}`"
             return v, v
         return None, None
 

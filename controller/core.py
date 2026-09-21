@@ -28,11 +28,17 @@ from ..state.text import TextState, strip_reasoning_tags
 from ..state.tooluse import ToolUseTracker
 # v1.4.0 fix (问题3 根因1): _reactivate_session_for_continuation 预创建 unified_state
 from ..state.linear import UnifiedLinearState
+# v1.7.0 (R3-01): terminal reason/source recorded on every terminal path
+from ..state.phase import TerminalReason
 
 _logger = logging.getLogger("hermes_lark_streaming")
 
 # v1.3.2: module-level constant (was previously re-defined on every on_interrupted call)
 _INTERRUPT_MAP_MAX = 200
+# v1.8.1 (P1): 与 _INTERRUPT_MAP_MAX 同构的防泄漏上界。continuation 路由的
+# 正常生命周期由「目标封卡终态 → 其 _cleanup 的 stale-key 清理」收敛；上界
+# 只兜底极端场景（目标永不到达终态时避免 map 无限增长）。
+_CONTINUATION_MAP_MAX = 200
 
 from ..state.session import CardSession  # noqa: F401 — re-exported for backward compatibility
 
@@ -166,6 +172,12 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         """记录 old_message_id -> new_message_id 的续写映射。线程安全。"""
         with self._continuation_map_lock:
             self._continuation_map[old_message_id] = new_message_id
+            # v1.8.1 (P1): 防泄漏上界（与 _interrupt_map 同构）——目标会话永
+            # 不终态的极端场景下路由无法收敛，丢弃最旧条目兑底。
+            if len(self._continuation_map) > _CONTINUATION_MAP_MAX:
+                excess = len(self._continuation_map) - _CONTINUATION_MAP_MAX
+                for old_key in list(self._continuation_map.keys())[:excess]:
+                    self._continuation_map.pop(old_key, None)
 
     def _pop_continuation_id(self, message_id: str) -> str | None:
         """取出并删除 message_id 对应的 continuation id（用于 on_completed 一次性消费）。"""
@@ -198,10 +210,13 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             return None
 
         # 标记 stale_session 已被重激活过（防止后续重复触发，限制最多 1 次）
-        stale_session._continuation_reactivation_count += 1
+        # v1.7.0 (R3-08): moved to AFTER successful registration + dispatch —
+        # the old early increment burned the single reactivation attempt even
+        # when the new session was never created (id conflict / dispatch
+        # failure), leaving the user without a continuation card forever.
+        seq = stale_session._continuation_reactivation_count + 1
 
         # 生成新的 message_id（anchor_id 后缀 -cont-<seq>，便于日志关联）
-        seq = stale_session._continuation_reactivation_count
         new_message_id = f"{anchor_id}-cont-{seq}"
 
         # 防止与已有 session 冲突（理论上 -cont-1 后缀不会冲突，但防御性检查）
@@ -219,6 +234,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         # anchor_id 设为原 anchor_id（reply 时仍回复到用户原始消息，保持线程上下文）
         new_session.anchor_id = anchor_id if anchor_id != new_message_id else None
         new_session._is_continuation = True
+        # v1.8.1 (P1): 继承原会话的话题隔离键——续写卡仍属于同一个话题，
+        # 其它话题新消息的并发 seal 检查不应把它误封。
+        new_session.thread_id = stale_session.thread_id
         # v1.4.0 fix: 预先创建 unified_state + 标记 linear=True，避免 on_answer 在
         new_session.linear = True
         new_session.unified_state = UnifiedLinearState()
@@ -239,15 +257,44 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         # 异步触发新卡片创建（_do_create_linear_card 内部 IDLE 守卫保证幂等）
         self._fire_and_forget(self._do_create_linear_card(new_session), loop)
 
+        # v1.7.0 (R3-08): count the reactivation ONLY now that the new session
+        # is registered and its creation has been dispatched.
+        stale_session._continuation_reactivation_count = seq
+
         try:
             if not stale_session.is_terminal_phase and stale_session.state != COMPLETING:
                 stale_session.state = COMPLETING
+                # v1.7.0 (R3-04): bump create_epoch via enter_terminal so the
+                # epoch guards in on_reasoning/on_tool_update/on_answer reject
+                # late callbacks carrying the OLD message_id immediately —
+                # previously the epoch stayed unchanged until the seal set a
+                # terminal state, leaving a window where stale callbacks wrote
+                # into a session that was already being sealed.
+                stale_session.enter_terminal(
+                    reason=TerminalReason.SUPERSEDED,
+                    source="reactivation_continuation",
+                )
                 self._fire_and_forget(
                     self._do_linear_complete_with_fallback(stale_session),
                     stale_session._loop,
                 )
         except Exception:
-            pass
+            # v1.7.0 (R1-04): was a bare `pass` — a failed fire-and-forget left
+            # the stale session stuck in COMPLETING forever (never terminal →
+            # never pruned → session leak, no card, no log).
+            _logger.warning(
+                "HLS: reactivation fire-and-forget failed old_msg=%s — forcing "
+                "terminal to avoid session leak",
+                (stale_session.message_id or "?")[:12],
+                exc_info=True,
+            )
+            if not stale_session.is_terminal_phase:
+                stale_session.state = CREATION_FAILED
+                stale_session.enter_terminal(
+                    reason=TerminalReason.ERROR,
+                    source="reactivation_ff_failed",
+                )
+                stale_session.flush.mark_completed()
 
         return new_session
 
@@ -285,20 +332,34 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
     def _fire_and_forget(self, coro: Coroutine[Any, Any, Any], loop: asyncio.AbstractEventLoop) -> None:
         """Schedule a coroutine for background execution without awaiting."""
+        # v1.8.3: loop.create_task() schedules via non-threadsafe call_soon —
+        # from a non-loop thread the callback is appended WITHOUT the
+        # self-pipe write, so a loop blocked in select() never wakes up and
+        # the coroutine silently stalls (FlushController.schedule_update
+        # already used call_soon_threadsafe correctly; this aligns the
+        # controller with it). Only take the create_task path when this IS
+        # the loop's thread; otherwise use run_coroutine_threadsafe, which
+        # wakes the loop.
         try:
-            task = loop.create_task(coro)
-            # Hold strong reference until task completes
-            self._pending_tasks.add(task)
-            task.add_done_callback(self._pending_tasks.discard)
+            on_loop_thread = asyncio.get_running_loop() is loop
         except RuntimeError:
-            # Loop might be closed — try run_coroutine_threadsafe as fallback
+            on_loop_thread = False
+        if on_loop_thread:
             try:
-                fut = asyncio.run_coroutine_threadsafe(coro, loop)
-                fut.add_done_callback(self._on_bg_task_done)
-            except Exception:
-                # v1.3.2 fix: close the coroutine to avoid 'never awaited' warning
-                coro.close()
-                _logger.debug("fire_and_forget failed", exc_info=True)
+                task = loop.create_task(coro)
+                # Hold strong reference until task completes
+                self._pending_tasks.add(task)
+                task.add_done_callback(self._pending_tasks.discard)
+                return
+            except RuntimeError:
+                pass  # loop closed between check and schedule — try threadsafe
+        try:
+            fut = asyncio.run_coroutine_threadsafe(coro, loop)
+            fut.add_done_callback(self._on_bg_task_done)
+        except Exception:
+            # v1.3.2 fix: close the coroutine to avoid 'never awaited' warning
+            coro.close()
+            _logger.debug("fire_and_forget failed", exc_info=True)
 
     def on_message_started(
         self,
@@ -306,6 +367,7 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         message_id: str | None,
         chat_id: str,
         anchor_id: str | None = None,
+        thread_id: str | None = None,
     ) -> None:
         """消息处理开始 — 创建会话 + 发占位卡片."""
         if not self.enabled:
@@ -320,8 +382,16 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
         # v1.3.6 fix: 用 seen set 跟踪已处理的 session 对象，防止同一 session
         seen_sessions: set[int] = set()
+        # v1.8.1 (P1): 并发 seal 的隔离键从 chat_id 收敛为 (thread_id or chat_id)。
+        # 话题群/群内话题中不同 topic 的消息共享 chat_id，但在 hermes 侧是
+        # 各自独立的 session（session key 含 thread_id）——旧比较会把别的
+        # 话题的活跃卡误封。话题内（同 thread_id）新消息打断旧卡、普通
+        # 群聊/私聊（thread_id=None）退回 chat_id 维度，均与 hermes 会话
+        # 语义逐场景对齐。
+        new_scope = thread_id or chat_id
         for existing_msg_id, existing_session in self._sess_items_snapshot():
-            if existing_session.chat_id != chat_id:
+            existing_scope = existing_session.thread_id or existing_session.chat_id
+            if existing_scope != new_scope:
                 continue
             if existing_session.is_terminal_phase:
                 continue
@@ -372,12 +442,19 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                 _logger.debug('metrics: record_card_created failed (reuse path)', exc_info=True)
             return
 
-        session = CardSession(message_id, chat_id, loop)
+        session = CardSession(message_id, chat_id, loop, thread_id=thread_id)
         self._sess_put(message_id, session)
         if anchor_id and anchor_id != message_id:
             session.anchor_id = anchor_id
             self._sess_put(anchor_id, session)
-        _logger.info("HLS: session created msg=%s trace=%s chat=%s anchor=%s", (message_id or "?")[:12], session.card_trace_id, chat_id[:12], (anchor_id or "")[:12])
+        _logger.info(
+            "HLS: session created msg=%s trace=%s chat=%s anchor=%s thread=%s",
+            (message_id or "?")[:12],
+            session.card_trace_id,
+            chat_id[:12],
+            (anchor_id or "")[:12],
+            (thread_id or "")[:12],
+        )
 
         # v1.1.0: Record metrics
         try:
@@ -526,6 +603,11 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
         session._was_aborted = True
         session.state = ABORTED
+        # v1.7.0 (R3-01): record terminal metadata on the ABORTED path too —
+        # previously only CREATION_FAILED/TERMINATED called enter_terminal,
+        # so terminal_reason was always empty for the most common terminal
+        # states (ABORTED/COMPLETED) and the epoch never bumped.
+        session.enter_terminal(reason=TerminalReason.ABORT, source="on_aborted")
         session.flush.mark_completed()
         _logger.info("on_aborted: msg=%s state=ABORTED", (message_id or "?")[:12])
 
@@ -545,6 +627,7 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         new_message_id: str,
         chat_id: str,
         anchor_id: str | None = None,
+        thread_id: str | None = None,
     ) -> None:
         """用户发送新消息导致前一条消息被中断 — abort A + create B."""
         if not self.enabled:
@@ -567,21 +650,44 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                     loop = self._get_loop()
                     if loop is not None:
                         async def _wait_and_abort():
+                            # v1.7.0 (R1-11): this tuple equals plain Exception
+                            # (TimeoutError is an Exception subclass). Keep the
+                            # swallow-everything intent but write it honestly.
                             try:
                                 await asyncio.wait_for(
                                     old_session.flush.wait_for_flush(),
                                     timeout=3.0,
                                 )
-                            except (asyncio.TimeoutError, Exception):
-                                pass
+                            except Exception:
+                                pass  # timeout or flush error — proceed with abort
                             # v1.3.2 fix (B3-01): re-check COMPLETING after the
+                            # flush wait.
+                            # v1.7.0 (R3-02): ALSO bail on any terminal state.
+                            # The seal chain can finish during the 3s wait —
+                            # overwriting COMPLETED/CREATION_FAILED with
+                            # ABORTED was an illegal transition that triggered
+                            # a second seal (double close / duplicate text
+                            # reply via _send_text_fallback) and clobbered the
+                            # successful COMPLETED state.
                             if old_session.state == COMPLETING:
                                 _logger.info(
                                     "on_interrupted: skip abort for msg=%s (session transitioned to COMPLETING during flush wait)",
                                     old_message_id[:12],
                                 )
                                 return
+                            if old_session.is_terminal_phase:
+                                _logger.info(
+                                    "on_interrupted: msg=%s already terminal (%s) after flush wait, skipping abort",
+                                    old_message_id[:12],
+                                    old_session.state,
+                                )
+                                return
                             old_session.state = ABORTED
+                            # v1.7.0 (R3-01): record terminal metadata + bump epoch.
+                            old_session.enter_terminal(
+                                reason=TerminalReason.ABORT,
+                                source="on_interrupted_wait",
+                            )
                             old_session.flush.mark_completed()
                             _logger.info(
                                 "on_interrupted: abort old msg=%s (after flush wait)",
@@ -592,6 +698,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                     else:
                         # No loop — immediate abort (best effort)
                         old_session.state = ABORTED
+                        old_session.enter_terminal(
+                            reason=TerminalReason.ABORT,
+                            source="on_interrupted_no_loop",
+                        )
                         old_session.flush.mark_completed()
                         _logger.info(
                             "on_interrupted: abort old msg=%s (no loop, immediate)",
@@ -601,6 +711,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                 else:
                     # No flush in progress — immediate abort
                     old_session.state = ABORTED
+                    old_session.enter_terminal(
+                        reason=TerminalReason.ABORT,
+                        source="on_interrupted_immediate",
+                    )
                     old_session.flush.mark_completed()
                     _logger.info(
                         "on_interrupted: abort old msg=%s",
@@ -612,7 +726,7 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             loop = self._get_loop()
             if loop is not None:
                 reply_anchor_id = anchor_id if anchor_id and anchor_id != new_message_id else None
-                session = CardSession(new_message_id, chat_id, loop)
+                session = CardSession(new_message_id, chat_id, loop, thread_id=thread_id)
                 session.anchor_id = reply_anchor_id
                 self._sess_put(new_message_id, session)
                 if reply_anchor_id:
@@ -682,6 +796,18 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                 "on_completed: idempotent, msg=%s state=%s",
                 (message_id or "?")[:12],
                 direct_session.state,
+            )
+            return True
+
+        # v1.7.0 (R3-03): swallow late completions after /stop. on_aborted
+        # already sealed the card (ABORTED is terminal); returning False made
+        # the gateway re-deliver the buffered final answer as a duplicate
+        # plain text reply next to the already-stopped card.
+        if direct_session is not None and direct_session.state == ABORTED:
+            _logger.info(
+                "on_completed: late completion after abort (state=ABORTED), "
+                "msg=%s — swallowed to avoid duplicate text reply",
+                (message_id or "?")[:12],
             )
             return True
 
@@ -755,8 +881,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                             _existing_len, _clean_len, (message_id or "?")[:12],
                             _existing[:60], clean_answer[:60],
                         )
-                        session.unified_state.answer_text = clean_answer
-                        session.unified_state.answer_dirty = True
+                        # v1.8.3: replace_answer_text adds answer-cap enforcement
+                        # on top of the v1.7.0 (R2-01) escape-cache reset.
+                        session.unified_state.replace_answer_text(clean_answer)
 
         # ── 保存错误/中断消息 ──
         # 用于在卡片正文中展示（而非仅页脚）
@@ -788,44 +915,6 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         self._complete_session(session)
         return True
 
-    async def on_cron_deliver_async(
-        self,
-        *,
-        chat_id: str,
-        content: str,
-        loop: asyncio.AbstractEventLoop,
-    ) -> bool:
-        """Cron 推送 — 包装为静态卡片发送，成功返回 True."""
-        if not self.enabled or not content or not chat_id:
-            return False
-        try:
-            await self._do_cron_deliver(chat_id, content)
-            _logger.info("cron card delivered: chat=%s len=%d", chat_id[:12], len(content))
-            return True
-        except Exception:
-            _logger.warning("cron card delivery failed", exc_info=True)
-            return False
-
-    def on_cron_deliver(
-        self,
-        *,
-        chat_id: str,
-        content: str,
-        loop: asyncio.AbstractEventLoop,
-    ) -> bool:
-        """Cron 推送（同步兼容接口）— 从非事件循环线程调用时使用."""
-        if not self.enabled or not content or not chat_id:
-            return False
-        future = asyncio.run_coroutine_threadsafe(
-            self._do_cron_deliver(chat_id, content), loop
-        )
-        try:
-            future.result(timeout=30)
-            _logger.info("cron card delivered: chat=%s len=%d", chat_id[:12], len(content))
-            return True
-        except Exception:
-            _logger.warning("cron card delivery failed", exc_info=True)
-            return False
 
     def defer_background_review(
         self,
@@ -957,7 +1046,15 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                 len(content),
             )
         except Exception:
-            pass
+            # v1.8.3: was a bare `pass` — the last-resort delivery failing
+            # silently meant the user received nothing with zero log trace
+            # (same anti-pattern family as v1.7.0 R1-02/R1-04).
+            _logger.warning(
+                "text fallback failed: msg=%s reply_to=%s",
+                (session.message_id or "?")[:12],
+                (session.anchor_id or session.message_id or "?")[:12],
+                exc_info=True,
+            )
 
     def _prune_stale_sessions(self) -> None:
         """v1.1.1: 只清理已终态的过期 session，保护活跃 session."""
@@ -968,7 +1065,30 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             if mid is None or now - s.created_at <= self._session_ttl:
                 continue
             if s.is_terminal_phase:
-                _logger.warning("pruning stale terminal session: msg=%s", (mid or "?")[:20])
+                # v1.8.1 (P1): 终态会话的 TTL 回收不再无条件斩断 continuation 路由。
+                # 此前竞态链：长任务流式卡被服务端关闭触发重激活（map[old]=cont）→
+                # old 封卡终态后超 TTL 被回收 → _cleanup 无条件 pop map[old] →
+                # hermes 后续 on_answer/on_completed(old) 重定向落空 → 续写新卡
+                # 永转圈（cont 非终态，本方法只告警不清理）→ 会话泄漏。
+                # 修复：cont 目标仍非终态时延迟回收本会话，等 cont 封卡终态后
+                # 由其自身 _cleanup 的 stale-key 清理（v1.4.0 已有）移除路由，
+                # 下轮 prune 再回收本会话——路由生命周期与续写会话严格同步。
+                cont_id = self._resolve_continuation_id(mid)
+                if cont_id is not None:
+                    cont_sess = self._sess_get(cont_id)
+                    if cont_sess is not None and not cont_sess.is_terminal_phase:
+                        _logger.info(
+                            "HLS: prune deferred — terminal session msg=%s still "
+                            "holds continuation route to active msg=%s",
+                            (mid or "?")[:20],
+                            cont_id[:20],
+                        )
+                        continue
+                # v1.8.0 (P3): 正常的过期清理（终态 session 超过 TTL 被回收）
+                # 在生产里以 WARNING 级别刷屏（实测 2 个月 180 条、零一次伴随
+                # 真故障）。降级 debug——真正反常的是下面的"活跃 session 超
+                # TTL"，保留 WARNING。
+                _logger.debug("pruning stale terminal session: msg=%s", (mid or "?")[:20])
                 self._cleanup(mid)
             else:
                 # 活跃 session 超 TTL 只打日志，不清理（避免 AI 回调丢失）
@@ -986,8 +1106,16 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
 _controller: StreamCardController | None = None
 
+# v1.8.3: double-checked locking — two threads racing on the first call
+# previously created two controllers (two FeishuClients + split-brain
+# session stores). Every other shared structure in this module is already
+# lock-guarded; the singleton accessor was the last unguarded one.
+_controller_init_lock = threading.Lock()
+
 def get_controller() -> StreamCardController:
     global _controller
     if _controller is None:
-        _controller = StreamCardController()
+        with _controller_init_lock:
+            if _controller is None:
+                _controller = StreamCardController()
     return _controller
