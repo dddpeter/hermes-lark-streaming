@@ -5,9 +5,8 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from hermes_lark_streaming.state import linear as linear_module
-from hermes_lark_streaming.state.linear import UnifiedLinearState, ReasoningRound
+from hermes_lark_streaming.state.linear import ReasoningRound, UnifiedLinearState
 
 
 class TestReasoningRoundDefaults:

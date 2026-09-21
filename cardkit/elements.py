@@ -5,12 +5,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from .i18n import _LOCALES, _T, _i18n, _t
-from .md import (
-    _downgrade_tables,
-    _split_long_text,
-    optimize_markdown_style,
-)
+from .i18n import _T, _i18n, _t
 
 __all__ = [
     'STREAMING_ELEMENT_ID',
@@ -76,7 +71,7 @@ def _extract_images_from_markdown(text: str) -> tuple[str, list[dict]]:
     return cleaned, images
 
 if TYPE_CHECKING:
-    from ..state.linear import ReasoningRound
+    pass
 
 STREAMING_ELEMENT_ID = "streaming_content"
 ANSWER_ELEMENT_ID = "answer_content"

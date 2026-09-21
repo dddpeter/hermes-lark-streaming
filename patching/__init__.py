@@ -6,7 +6,6 @@ import contextvars
 import logging
 import threading
 import time
-from datetime import datetime, timezone, timedelta
 from typing import Any, Callable
 
 from .. import __version__
@@ -14,7 +13,9 @@ from .. import __version__
 try:
     from .hermes_adapter import HermesCompat
 except ImportError:  # pragma: no cover — fallback for pytest-only path
-    from hermes_lark_streaming.patching.hermes_adapter import HermesCompat  # type: ignore[no-redef]
+    from hermes_lark_streaming.patching.hermes_adapter import (
+        HermesCompat,  # type: ignore[no-redef]
+    )
 
 __all__ = [
     # Shared state
@@ -144,51 +145,51 @@ def _send_result_ok(message_id: str | None = None):
 
 # These imports must come AFTER shared state is defined to avoid circular
 
-from .gateway import (  # noqa: E402
-    _wrap_handle_message,
-    _wrap_handle_message_with_agent,
-    _wrap_run_agent,
-    _wrap_run_background_task,
-    _wrap_cron_deliver,
-    _wrap_run_conversation,
+from .adapter import (  # noqa: E402
+    _REACTION_STATUS_MAP,
+    _clarify_answers,
+    _clarify_card_info,
+    _clarify_card_msg_ids,
+    _clarify_choices,
+    _clarify_questions,
+    _clarify_selections,
+    _classify_gateway_message,
+    _handle_clarify_card_action,
+    _register_gateway_card,
+    _send_result_ok,
+    _unregister_gateway_card,
+    _wrap_feishu_adapter_add_reaction,
+    _wrap_feishu_adapter_delete_reaction,
+    _wrap_feishu_adapter_edit,
+    _wrap_feishu_adapter_send,
+    _wrap_feishu_adapter_send_clarify,
+    _wrap_handle_card_action_event,
+    _wrap_relay_adapter_send,
+    _wrap_relay_adapter_send_for_platform,
 )
 from .callbacks import (  # noqa: E402
     _maybe_wrap_callbacks,
 )
-from .adapter import (  # noqa: E402
-    _classify_gateway_message,
-    _wrap_feishu_adapter_send,
-    _register_gateway_card,
-    _unregister_gateway_card,
-    _wrap_feishu_adapter_edit,
-    _wrap_feishu_adapter_add_reaction,
-    _wrap_feishu_adapter_delete_reaction,
-    _wrap_feishu_adapter_send_clarify,
-    _wrap_handle_card_action_event,
-    _handle_clarify_card_action,
-    _REACTION_STATUS_MAP,
-    _clarify_choices,
-    _clarify_questions,
-    _clarify_card_msg_ids,
-    _clarify_selections,
-    _clarify_answers,
-    _clarify_card_info,
-    _send_result_ok,
-    _wrap_relay_adapter_send,
-    _wrap_relay_adapter_send_for_platform,
+from .gateway import (  # noqa: E402
+    _wrap_cron_deliver,
+    _wrap_handle_message,
+    _wrap_handle_message_with_agent,
+    _wrap_run_agent,
+    _wrap_run_background_task,
+    _wrap_run_conversation,
 )
 from .hooks import (  # noqa: E402
-    on_feishu_normalize,
-    on_message_started,
-    on_message_completed,
-    on_tool_updated,
-    on_answer_delta,
-    on_thinking_delta,
-    on_reasoning_delta,
-    on_background_review_message,
-    on_message_aborted,
-    on_message_interrupted,
     _safe_hook,
+    on_answer_delta,
+    on_background_review_message,
+    on_feishu_normalize,
+    on_message_aborted,
+    on_message_completed,
+    on_message_interrupted,
+    on_message_started,
+    on_reasoning_delta,
+    on_thinking_delta,
+    on_tool_updated,
 )
 
 # ── Public entry point ─────────────────────────────────────────────

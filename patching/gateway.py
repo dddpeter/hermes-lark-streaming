@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import functools
 import time
-from typing import Any, Callable
+from typing import Callable
 
 from .. import __version__
 from ..state.phase import TERMINAL_PHASES
 from . import (
+    _logger,
     _msg_ctx,
+    _send_result_ok,
     _started_msg_ids,
     _started_msg_ids_lock,
     _thread_local_ctx,
-    _logger,
-    _send_result_ok,
 )
 
 # ── GatewayRunner method wrappers ──────────────────────────────────
@@ -50,7 +50,7 @@ def _wrap_handle_message(orig: Callable) -> Callable:
                         _logger.debug("HLS: _session_key_for_source failed", exc_info=True)
                     if _quick_key and _quick_key in self._running_agents:
                         # Agent is running — send interrupt hint card
-                        from ..aowen import build_interrupt_hint_card, _send_card_async
+                        from ..aowen import _send_card_async, build_interrupt_hint_card
                         _chat_id = getattr(_source, "chat_id", "") if _source else ""
                         if _chat_id:
                             _logger.info(
@@ -543,10 +543,10 @@ def _wrap_run_agent(orig: Callable) -> Callable:
 def _wrap_run_conversation(orig: Callable) -> Callable:
     """Wrap all 6 streaming callbacks right before run_conversation executes."""
     # Lazy import to avoid circular dependency at module load time
-    from .callbacks import _maybe_wrap_callbacks  # noqa: F811
-
     # v1.3.4 fix (P1): inspect.signature 可能对 C 扩展函数/wrapped callable
     import inspect
+
+    from .callbacks import _maybe_wrap_callbacks
     try:
         _has_persist_ts = "persist_user_timestamp" in inspect.signature(orig).parameters
     except (ValueError, TypeError):
@@ -752,7 +752,7 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
         feishu_adapter = None
 
         try:
-            from gateway.config import Platform
+            from gateway.config import Platform  # noqa: F401 — import-probe
 
             for p in list(adapters.keys()):
                 pn = p.value.lower() if hasattr(p, "value") else str(p).lower()

@@ -48,6 +48,23 @@ include = ["controller*", "cardkit*", "patching*", "state*", "feishu*", "config*
 [tool.setuptools.package-data]
 hermes_lark_streaming = ["plugin.yaml"]
 
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# E4/E7/E9 + F：正确性基线；I：import 排序；RUF100：清理无效 noqa。
+# 有意不选：BLE001/S110 等防御性 except 属于遗留清理专项，另起 commit；
+# 不启用 ruff format（历史代码全量重排 diff 噪声过大）。
+select = ["E4", "E7", "E9", "F", "I", "RUF100"]
+
+[tool.ruff.lint.per-file-ignores]
+# state/session.py：向后兼容别名（IDLE = CardPhase.IDLE）有意插在 import 组之间；
+# 调整 import 顺序存在循环导入风险（session ↔ feishu/flush），维持历史布局。
+"state/session.py" = ["E402"]
+# tests/conftest.py：先把仓库根注册为 hermes_lark_streaming 包（sys.modules 桥接）
+# 再常规 import，属有意的引导模式。
+"tests/conftest.py" = ["E402"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # NOTE: no pythonpath needed — conftest.py registers the repo root

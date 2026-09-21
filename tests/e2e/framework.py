@@ -50,7 +50,7 @@ import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from .mock_feishu import MockFeishuServer, MockCardState
+from .mock_feishu import MockCardState, MockFeishuServer
 
 _logger = logging.getLogger("hermes_lark_streaming")
 
@@ -116,8 +116,8 @@ class E2ETestRunner:
 
     async def setup(self) -> None:
         """Set up test environment — mock or real, decided by env vars."""
-        from hermes_lark_streaming.controller import StreamCardController
         from hermes_lark_streaming.config import Config
+        from hermes_lark_streaming.controller import StreamCardController
 
         self._controller = StreamCardController()
 
@@ -231,6 +231,7 @@ class E2ETestRunner:
         """
         import json
         import time
+
         from lark_oapi.api.im.v1 import (
             CreateMessageRequest,
             CreateMessageRequestBody,
@@ -265,6 +266,7 @@ class E2ETestRunner:
         """
         import json
         import time
+
         from lark_oapi.api.im.v1 import (
             CreateMessageRequest,
             CreateMessageRequestBody,

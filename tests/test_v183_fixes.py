@@ -24,11 +24,10 @@ import logging
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
-
-import pytest
+from unittest.mock import AsyncMock
 
 import hermes_lark_streaming.controller.core as controller_core
+import pytest
 from hermes_lark_streaming.controller import StreamCardController
 from hermes_lark_streaming.feishu import (
     FeishuAPIError,
@@ -38,7 +37,6 @@ from hermes_lark_streaming.feishu import (
 from hermes_lark_streaming.feishu.client import MSG_NOT_FOUND
 
 from tests.test_controller import _make_session, _setup_ctrl
-
 
 # ══════════════════════════════════════════════════════════════════════
 # Fix 1 — get_controller() singleton lock
@@ -80,7 +78,7 @@ class TestSingletonLock:
         # either (unlocked) create a second instance or (locked) block on
         # the lock until A finishes.
         class _WorkerB(threading.Thread):
-            def run(self) -> None:  # noqa: D102 — test coordination only
+            def run(self) -> None:
                 b_checked.set()
                 results.append(controller_core.get_controller())
 
@@ -464,12 +462,12 @@ class TestUnifiedFlushUsesFragmentCache:
         """End-to-end: _do_unified_flush passes the state's fragment cache,
         so a second panel rebuild does not re-render finalized rounds."""
         import hermes_lark_streaming.cardkit.elements as elements
-        from hermes_lark_streaming.controller.mixin import STREAMING
-        from hermes_lark_streaming.state.linear import UnifiedLinearState
         from hermes_lark_streaming.cardkit import (
             ANSWER_ELEMENT_ID,
             UNIFIED_PANEL_ELEMENT_ID,
         )
+        from hermes_lark_streaming.controller.mixin import STREAMING
+        from hermes_lark_streaming.state.linear import UnifiedLinearState
 
         ctrl = _setup_ctrl(linear=True)
         # show_reasoning defaults to False (reads the on-disk hermes config

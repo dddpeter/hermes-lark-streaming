@@ -10,21 +10,20 @@ from typing import TYPE_CHECKING, Any
 
 # Phase constants — single source of truth in state.phase
 from .phase import (
+    TERMINAL_PHASES,
     CardPhase,
     TerminalReason,
-    TERMINAL_PHASES,
-    _TERMINAL,
     is_legal_transition,
 )
 
 # Backward-compatible alias — old code imports IDLE from this module
 IDLE = CardPhase.IDLE
 
+from ..feishu import UnavailableGuard
 from ..flush import FlushController
 from .linear import UnifiedLinearState
 from .text import TextState
 from .tooluse import ToolUseTracker
-from ..feishu import UnavailableGuard
 
 if TYPE_CHECKING:
     pass

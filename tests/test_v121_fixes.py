@@ -15,10 +15,8 @@ Covers:
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
-
 
 # ── P0-01: escape_markdown_asterisks ──
 
@@ -239,7 +237,7 @@ class TestTruncateReasoning:
 
     @pytest.fixture(autouse=True)
     def _import(self):
-        from cardkit.elements import _truncate_reasoning, _REASONING_DISPLAY_LIMIT
+        from cardkit.elements import _REASONING_DISPLAY_LIMIT, _truncate_reasoning
         self.truncate = _truncate_reasoning
         self.limit = _REASONING_DISPLAY_LIMIT
 
@@ -279,8 +277,6 @@ class TestClarifyLabelOverflow:
         from cardkit.special import build_clarify_card
         # 5 choices — should use A-E
         card = build_clarify_card(question="Q", choices=["A", "B", "C", "D", "E"])
-        # Find the select_static options
-        body = card.get("body", card.get("elements", []))
         # Just ensure no special chars like [ \ ] in labels
         content_str = str(card)
         # Should not contain "[." or "\\." from chr(ord("A")+26)
@@ -304,7 +300,7 @@ class TestMetricsLockThreadSafety:
     """Test that metrics operations are thread-safe."""
 
     def test_concurrent_increments(self):
-        from aowen import record_card_created, get_metrics, _do_reset
+        from aowen import _do_reset, get_metrics, record_card_created
         _do_reset()
         errors = []
 
@@ -333,7 +329,7 @@ class TestUnavailableCacheLockThreadSafety:
     """Test that unavailable cache operations are thread-safe."""
 
     def test_concurrent_mark_and_check(self):
-        from feishu.guard import mark_unavailable, is_unavailable
+        from feishu.guard import is_unavailable, mark_unavailable
         errors = []
 
         def mark_many():
@@ -422,6 +418,7 @@ class TestYAMLErrorHandling:
     def test_load_invalid_yaml(self, tmp_path):
         """_load() should return empty dict on invalid YAML."""
         import yaml
+
         from config.reader import Config
 
         cfg = Config()
@@ -431,7 +428,6 @@ class TestYAMLErrorHandling:
 
         # Direct test: yaml.safe_load on invalid YAML should raise
         # and Config._load should catch it
-        original_raw = cfg._raw
         cfg._raw = None  # Force reload
         # We can't easily set the config path, so test the principle:
         # yaml.safe_load on bad yaml raises YAMLError
@@ -447,8 +443,9 @@ def test_v134_aowen_handler_exception_returns_skip_not_none():
     返回 None 会让 /aowen 命令落入 agent，LLM 把 "/aowen foo" 当用户 prompt 处理。
     修复：异常时 return _skip(...) + 升级到 exception 级别日志。
     """
-    from aowen import handle_pre_gateway_dispatch
     from types import SimpleNamespace
+
+    from aowen import handle_pre_gateway_dispatch
 
     # 构造一个 /aowen 命令事件
     source = SimpleNamespace(

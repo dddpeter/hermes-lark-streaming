@@ -12,7 +12,6 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from hermes_lark_streaming.cardkit import (
     build_clarify_card,
     build_clarify_confirmed_card,
@@ -24,7 +23,6 @@ from hermes_lark_streaming.cardkit.special import (
     _CLARIFY_MAX_CHOICE_LEN,
     _normalize_choice,
 )
-
 
 # ── build_clarify_card (Pending state) ──
 
@@ -346,7 +344,7 @@ class TestWrapFeishuAdapterSendClarify:
 
         with patch("hermes_lark_streaming.controller.get_controller", return_value=mock_ctrl):
             import asyncio
-            result = asyncio.get_event_loop().run_until_complete(
+            asyncio.get_event_loop().run_until_complete(
                 wrapped(
                     MagicMock(), "chat_123", "Question?", ["A", "B"],
                     "clarify_1", "session_key_1",
@@ -357,7 +355,11 @@ class TestWrapFeishuAdapterSendClarify:
 
     def test_stores_choices_for_callback(self) -> None:
         """When card is sent, choices should be stored in _clarify_choices."""
-        from hermes_lark_streaming.patching import _clarify_choices, _clarify_questions, _wrap_feishu_adapter_send_clarify
+        from hermes_lark_streaming.patching import (
+            _clarify_choices,
+            _clarify_questions,
+            _wrap_feishu_adapter_send_clarify,
+        )
 
         orig = AsyncMock()
         wrapped = _wrap_feishu_adapter_send_clarify(orig)
@@ -474,9 +476,9 @@ class TestWrapHandleCardActionEventV142:
     async def test_clarify_action_handled_and_original_not_called(self) -> None:
         """v1.4.2: clarify action → 复用 _handle_clarify_card_action, 不调用原生."""
         from hermes_lark_streaming.patching import (
-            _wrap_handle_card_action_event,
-            _clarify_questions,
             _clarify_choices,
+            _clarify_questions,
+            _wrap_handle_card_action_event,
         )
         _clarify_questions["v142_cid"] = "Q?"
         _clarify_choices["v142_cid"] = ["A", "B"]
@@ -567,9 +569,9 @@ class TestStaleBoundMethodSimulation:
         _handle_card_action_event is patched on the class. The stale method's
         body does self._handle_card_action_event(data) → hits the patch."""
         from hermes_lark_streaming.patching import (
-            _wrap_handle_card_action_event,
-            _clarify_questions,
             _clarify_choices,
+            _clarify_questions,
+            _wrap_handle_card_action_event,
         )
         _clarify_questions["stale_cid"] = "Q?"
         _clarify_choices["stale_cid"] = ["X", "Y"]
@@ -639,7 +641,7 @@ class TestStaleBoundMethodSimulation:
                 "tools": MagicMock(),
                 "tools.clarify_gateway": mock_cg,
             }):
-                result = stale_bound_method(mock_data)
+                stale_bound_method(mock_data)
                 # stale_bound_method scheduled a coroutine via _submit_on_loop;
                 # let it execute
                 await asyncio.sleep(0.05)
@@ -666,9 +668,6 @@ class TestStaleBoundMethodSimulation:
                 self._submit_on_loop = lambda loop, coro: asyncio.ensure_future(coro)
 
             def _on_card_action_trigger(self, data):
-                event = getattr(data, "event", None)
-                action = getattr(event, "action", None)
-                action_value = getattr(action, "value", {}) or {}
                 # No hermes_action/hermes_update_prompt_action → falls through
                 self._submit_on_loop(self._loop, self._handle_card_action_event(data))
                 return "empty"

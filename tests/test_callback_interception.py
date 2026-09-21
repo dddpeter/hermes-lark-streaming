@@ -14,14 +14,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from hermes_lark_streaming.patching import (
-    _msg_ctx,
     _maybe_wrap_callbacks,
+    _msg_ctx,
     _thread_local_ctx,
 )
-
 
 # ── Helpers ──
 

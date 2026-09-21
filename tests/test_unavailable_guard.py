@@ -6,17 +6,15 @@ import time
 from unittest.mock import MagicMock
 
 import pytest
-
-from hermes_lark_streaming.feishu import MSG_NOT_FOUND
-from hermes_lark_streaming.feishu import guard as _guard_module
 from hermes_lark_streaming.feishu import (
+    MSG_NOT_FOUND,
     UnavailableGuard,
     extract_api_code,
     is_terminal_api_code,
     is_unavailable,
     mark_unavailable,
 )
-
+from hermes_lark_streaming.feishu import guard as _guard_module
 
 # ---------------------------------------------------------------------------
 # Fixtures

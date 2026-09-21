@@ -316,9 +316,9 @@ def build_help_card() -> dict[str, Any]:
 def build_status_card() -> dict[str, Any]:
     """Build status card — 3 metrics, patch status, collapsible config."""
     try:
+        from ..config import Config
         from ..controller import get_controller
         from ..patching import _patch_status
-        from ..config import Config
 
         ctrl = get_controller()
         cfg = Config()
@@ -720,6 +720,7 @@ def _do_reset() -> None:
 def _send_card_async(chat_id: str, card: dict, cmd_name: str) -> None:
     """Send card fire-and-forget via FeishuClient. Lazy-inits if not yet ready."""
     import asyncio
+
     from ..controller import get_controller
 
     ctrl = get_controller()

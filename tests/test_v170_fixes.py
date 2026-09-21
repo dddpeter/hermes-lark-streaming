@@ -17,14 +17,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from hermes_lark_streaming.controller import CardSession, StreamCardController
 from hermes_lark_streaming.controller.mixin import (
     ABORTED,
     COMPLETED,
     COMPLETING,
-    CREATION_FAILED,
-    IDLE,
     STREAMING,
 )
 from hermes_lark_streaming.state.linear import UnifiedLinearState
@@ -81,7 +78,9 @@ class TestRelayWrappers:
     @pytest.mark.asyncio
     async def test_send_for_platform_cron_lane_redirects_to_card(self):
         """Feishu cron deliveries (job_id metadata) become cron cards."""
-        from hermes_lark_streaming.patching.adapter import _wrap_relay_adapter_send_for_platform
+        from hermes_lark_streaming.patching.adapter import (
+            _wrap_relay_adapter_send_for_platform,
+        )
 
         cls = self._make_relay_cls()
         orig = cls.send_for_platform
@@ -92,7 +91,7 @@ class TestRelayWrappers:
         ctrl._do_cron_deliver = AsyncMock(return_value=None)
 
         with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
-            result = await relay.send_for_platform(
+            await relay.send_for_platform(
                 "feishu", "chat_x", "Cronjob Response: hi",
                 metadata={"job_id": "job-123"},
             )
@@ -103,7 +102,9 @@ class TestRelayWrappers:
     @pytest.mark.asyncio
     async def test_send_for_platform_non_feishu_passthrough(self):
         """Non-Feishu platforms fronted by the same relay pass through."""
-        from hermes_lark_streaming.patching.adapter import _wrap_relay_adapter_send_for_platform
+        from hermes_lark_streaming.patching.adapter import (
+            _wrap_relay_adapter_send_for_platform,
+        )
 
         cls = self._make_relay_cls()
         cls.send_for_platform = _wrap_relay_adapter_send_for_platform(cls.send_for_platform)
@@ -130,7 +131,7 @@ class TestRelayWrappers:
         ctrl._do_gateway_deliver = AsyncMock(return_value=("card_msg_1", None))
 
         with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
-            result = await relay.send("chat_feishu", "Session compressed")
+            await relay.send("chat_feishu", "Session compressed")
 
         ctrl._do_gateway_deliver.assert_awaited_once()
         assert relay.calls == []  # suppressed — never reached the wire
@@ -191,7 +192,9 @@ class TestRelayWrappers:
     @pytest.mark.asyncio
     async def test_cron_card_failure_falls_back_to_wire(self):
         """A failed cron card must still deliver plain text through the relay."""
-        from hermes_lark_streaming.patching.adapter import _wrap_relay_adapter_send_for_platform
+        from hermes_lark_streaming.patching.adapter import (
+            _wrap_relay_adapter_send_for_platform,
+        )
 
         cls = self._make_relay_cls()
         cls.send_for_platform = _wrap_relay_adapter_send_for_platform(cls.send_for_platform)
@@ -236,7 +239,9 @@ class TestApplyRelayAdapterPatches:
     def test_create_adapter_hook_patches_relay(self):
         """The v1.6.0 create_adapter hook (extended in v1.7.0) patches relay
         adapters created through platform_registry.create_adapter."""
-        from hermes_lark_streaming.patching import _wrap_platform_registry_create_adapter
+        from hermes_lark_streaming.patching import (
+            _wrap_platform_registry_create_adapter,
+        )
 
         created = []
 
@@ -258,13 +263,11 @@ class TestApplyRelayAdapterPatches:
     def test_create_adapter_hook_relay_module_sniff(self):
         """A relay adapter whose class module lives under gateway.relay is
         detected even when the registry name says something else."""
-        from hermes_lark_streaming.patching import _wrap_platform_registry_create_adapter
+        from hermes_lark_streaming.patching import (
+            _wrap_platform_registry_create_adapter,
+        )
 
         # Build a class whose __module__ looks like the real relay adapter
-        cls_dict = {
-            "__module__": "gateway.relay.adapter",
-            "send": asyncio.coroutine(lambda self, *a, **kw: None) if hasattr(asyncio, "coroutine") else None,
-        }
 
         async def _send(self, *a, **kw): ...
         async def _sfp(self, *a, **kw): ...
@@ -567,6 +570,7 @@ class TestSelectValueParsing:
     def _run(self, option_value, choices):
         import sys as _sys
         import types as _types
+
         from hermes_lark_streaming.patching.adapter import _handle_clarify_card_action
 
         adapter = SimpleNamespace(
@@ -592,7 +596,7 @@ class TestSelectValueParsing:
              patch("hermes_lark_streaming.patching.adapter._clarify_choices", {"c9": choices}), \
              patch("hermes_lark_streaming.patching.adapter._clarify_selections", {}), \
              patch.dict(_sys.modules, {"tools": tools_mod, "tools.clarify_gateway": cg_mod}):
-            result = _handle_clarify_card_action(
+            _handle_clarify_card_action(
                 adapter, data, "select", {"clarify_id": "c9"},
             )
         return resolved
@@ -622,6 +626,7 @@ class TestSubmittedCardResponseContract:
         old call site passed a nonexistent `choices` kwarg and raised
         TypeError on every clarify click."""
         import inspect
+
         from hermes_lark_streaming.cardkit.special import build_clarify_submitted_card
 
         params = inspect.signature(build_clarify_submitted_card).parameters

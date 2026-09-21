@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
-import logging
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 from hermes_lark_streaming.patching.hooks import (
     _safe_hook,
     on_answer_delta,
@@ -23,7 +20,6 @@ from hermes_lark_streaming.patching.hooks import (
     on_thinking_delta,
     on_tool_updated,
 )
-
 
 # ── Helpers ──
 

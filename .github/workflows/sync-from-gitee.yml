@@ -95,7 +95,8 @@ jobs:
         if: steps.detect.outputs.has_changes == 'true' || inputs.force_tests == true
         run: |
           pip install ruff
-          ruff check . --select E,F --ignore E501 || true
+          # 按 pyproject [tool.ruff] 规则集检查，失败即红（旧写法 || true 形同虚设）
+          ruff check .
 
       - name: Run unit tests
         if: steps.detect.outputs.has_changes == 'true' || inputs.force_tests == true

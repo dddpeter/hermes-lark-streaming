@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from . import (
+    _get_event_message_id,
+    _logger,
     _msg_ctx,
     _thread_local_ctx,
-    _logger,
-    _get_event_message_id,
 )
+
 
 def _resolve_eid(fallback_eid: str | None) -> str | None:
     """Re-resolve the current event_message_id from _msg_ctx at call time."""

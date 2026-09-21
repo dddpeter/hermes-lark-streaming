@@ -13,7 +13,7 @@ _HERE = Path(__file__).resolve().parent
 def _bootstrap_package() -> None:
     """手动注册 hermes_lark_streaming 到 sys.modules (当不可导入时)."""
     try:
-        import hermes_lark_streaming  # noqa: F401
+        import hermes_lark_streaming
         return  # 已可导入，无需处理
     except ImportError:
         pass
@@ -24,7 +24,7 @@ def _bootstrap_package() -> None:
         sys.path.insert(0, str(parent))
 
     try:
-        import hermes_lark_streaming  # noqa: F401
+        import hermes_lark_streaming
         return
     except ImportError:
         pass
@@ -173,13 +173,13 @@ def _cmd_verify() -> int:
 
         # Verify that gateway modules are importable
         try:
-            from gateway.run import GatewayRunner
+            from gateway.run import GatewayRunner  # noqa: F401 — import-probe
             print("gateway.run.GatewayRunner: importable")
         except ImportError as e:
             print(f"gateway.run.GatewayRunner: NOT importable ({e})")
 
         try:
-            from run_agent import AIAgent
+            from run_agent import AIAgent  # noqa: F401 — import-probe
             print("run_agent.AIAgent: importable")
         except ImportError as e:
             print(f"run_agent.AIAgent: NOT importable ({e})")
@@ -207,7 +207,8 @@ def _cmd_cleanup() -> int:
 
 def _cmd_doctor() -> int:
     """Full diagnostic: version, config, credentials, patch status, logs."""
-    import os, sys
+    import os
+    import sys
     print("=" * 60)
     print("  hermes-lark-streaming doctor")
     print("=" * 60)
@@ -276,7 +277,7 @@ def _cmd_doctor() -> int:
     print(f"      env vars:    {'configured' if has_env else 'not set'}")
     print(f"      config.yaml: {'configured' if has_cfg else 'not set'}")
     print(f"      ~/.hermes/.env: {'exists' if env_file.exists() else 'not found'}"
-          + (f" (found)" if has_dotenv else ""))
+          + (" (found)" if has_dotenv else ""))
     if not (has_env or has_cfg or has_dotenv):
         print("      ⚠ MISSING — cards will NOT work.")
 

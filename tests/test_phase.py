@@ -16,20 +16,16 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from hermes_lark_streaming.state.phase import (
-    CardPhase,
-    TERMINAL_PHASES,
     _TERMINAL,
     PHASE_TRANSITIONS,
+    TERMINAL_PHASES,
+    CardPhase,
     TerminalReason,
     is_legal_transition,
 )
 from hermes_lark_streaming.state.session import CardSession
-
 
 # ── CardPhase 常量 ──────────────────────────────────────────────────
 
@@ -344,7 +340,6 @@ class TestCardSessionEnterTerminal:
 
     def test_enter_terminal_increments_epoch_only_once(self) -> None:
         s = self._make_session()
-        epoch0 = s.create_epoch
         s.enter_terminal(reason="normal", source="test")
         epoch1 = s.create_epoch
         s.enter_terminal(reason="error", source="test2")
@@ -488,9 +483,14 @@ class TestBackwardCompatibility:
         ``CREATION_FAILED`` (or ``CardPhase.FAILED``) instead.
         """
         from hermes_lark_streaming.controller.mixin import (
-            IDLE, CREATING, STREAMING, COMPLETING,
-            COMPLETED, CREATION_FAILED, ABORTED, TERMINATED,
-            _TERMINAL,
+            ABORTED,
+            COMPLETED,
+            COMPLETING,
+            CREATING,
+            CREATION_FAILED,
+            IDLE,
+            STREAMING,
+            TERMINATED,
         )
         assert IDLE == "idle"
         assert CREATING == "creating"
@@ -511,9 +511,9 @@ class TestBackwardCompatibility:
         (or ``CardPhase.FAILED``) instead.
         """
         from hermes_lark_streaming.controller import (
-            IDLE, CREATING, STREAMING, COMPLETING,
-            COMPLETED, CREATION_FAILED, ABORTED, TERMINATED,
-            _TERMINAL,
+            CREATION_FAILED,
+            IDLE,
+            TERMINATED,
         )
         assert IDLE == "idle"
         assert CREATION_FAILED == "creation_failed"
@@ -524,9 +524,8 @@ class TestBackwardCompatibility:
     def test_state_package_reexports(self) -> None:
         """Phase types re-exported from state package."""
         from hermes_lark_streaming.state import (
-            CardPhase, TerminalReason,
-            TERMINAL_PHASES, _TERMINAL,
-            is_legal_transition,
+            CardPhase,
+            TerminalReason,
         )
         assert CardPhase.CREATION_FAILED == "creation_failed"
         assert TerminalReason.UNAVAILABLE == "unavailable"

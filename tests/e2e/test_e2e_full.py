@@ -11,6 +11,7 @@ v1.1.1: 群聊为主，私聊覆盖核心流程。
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 # v1.1.1: 只有核心流程参数化群聊+私聊
@@ -73,8 +74,12 @@ class TestBugFixes:
     @pytest.mark.asyncio
     async def test_drain_300309_fallback(self, runner):
         """drain 遇 300309 改用 batch_update 写入答案."""
-        from hermes_lark_streaming.feishu import FeishuAPIError, CARDKIT_STREAMING_CLOSED
         from unittest.mock import AsyncMock
+
+        from hermes_lark_streaming.feishu import (
+            CARDKIT_STREAMING_CLOSED,
+            FeishuAPIError,
+        )
 
         session = await runner.start_message("test 300309")
         await runner.feed_answer(session, "answer after streaming closed")
@@ -94,8 +99,12 @@ class TestBugFixes:
     @pytest.mark.asyncio
     async def test_drain_300313_fallback_no_tag(self, runner):
         """drain 遇 300313 fallback 不带 tag."""
-        from hermes_lark_streaming.feishu import FeishuAPIError, CARDKIT_ELEMENT_NOT_FOUND
         from unittest.mock import AsyncMock
+
+        from hermes_lark_streaming.feishu import (
+            CARDKIT_ELEMENT_NOT_FOUND,
+            FeishuAPIError,
+        )
 
         session = await runner.start_message("test 300313")
         await runner.feed_answer(session, "answer for 313 test")

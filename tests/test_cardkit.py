@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from hermes_lark_streaming.cardkit import (
     _LOADING_HINT_ELEMENT_ID,
     _build_error_panel,
@@ -29,9 +30,6 @@ from hermes_lark_streaming.cardkit.md import (
     _strip_invalid_image_keys,
     optimize_markdown_style,
 )
-
-import pytest
-
 from hermes_lark_streaming.state.linear import ReasoningRound
 
 # --- Markdown 优化 ---
@@ -876,7 +874,6 @@ class TestBuildUnifiedPanelTrimming:
 
     def _make_rounds(self, n: int) -> list:
         """Create n reasoning rounds."""
-        from hermes_lark_streaming.state.linear import ReasoningRound
         rounds = [ReasoningRound(index=i + 1, text=f"Reasoning {i + 1}") for i in range(n)]
         for r in rounds:
             r.elapsed_ms = 100
@@ -969,7 +966,7 @@ class TestBuildUnifiedPanelTrimming:
         """panel_events are correctly reindexed after trimming."""
         rounds = self._make_rounds(25)
         steps = self._make_steps(25)
-        panel_events = [(f"reasoning", i) for i in range(25)] + [(f"tool", i) for i in range(25)]
+        panel_events = [("reasoning", i) for i in range(25)] + [("tool", i) for i in range(25)]
         panel = build_unified_panel(
             reasoning_rounds=rounds,
             tool_steps=steps,
@@ -1007,7 +1004,9 @@ class TestBuildUnifiedPanelTrimming:
         the total is at or below 195.
         """
         # 20 rounds + 20 steps, each with max elements (detail + result for tools)
-        from hermes_lark_streaming.cardkit.elements import build_unified_panel as _build_panel
+        from hermes_lark_streaming.cardkit.elements import (
+            build_unified_panel as _build_panel,
+        )
         rounds = self._make_rounds(20)
         steps = self._make_steps(20)
         panel = _build_panel(
@@ -1041,7 +1040,6 @@ class TestEnforceCardElementLimit:
 
     def _make_rounds(self, n: int) -> list:
         """Create n reasoning rounds."""
-        from hermes_lark_streaming.state.linear import ReasoningRound
         rounds = [ReasoningRound(index=i + 1, text=f"Reasoning {i + 1}") for i in range(n)]
         for r in rounds:
             r.elapsed_ms = 100
@@ -1057,7 +1055,9 @@ class TestEnforceCardElementLimit:
 
     def test_no_trim_when_under_limit(self):
         """Card under 195 elements is not trimmed."""
-        from hermes_lark_streaming.cardkit.elements import build_unified_panel as _build_panel
+        from hermes_lark_streaming.cardkit.elements import (
+            build_unified_panel as _build_panel,
+        )
         panel = _build_panel(
             reasoning_rounds=self._make_rounds(5),
             tool_steps=self._make_steps(5),
@@ -1083,7 +1083,9 @@ class TestEnforceCardElementLimit:
 
     def test_trim_preserves_answer_and_footer(self):
         """Answer text and footer are never trimmed — only panel children."""
-        from hermes_lark_streaming.cardkit.elements import build_unified_panel as _build_panel
+        from hermes_lark_streaming.cardkit.elements import (
+            build_unified_panel as _build_panel,
+        )
         panel = _build_panel(
             reasoning_rounds=self._make_rounds(25),
             tool_steps=self._make_steps(25),
@@ -1118,8 +1120,9 @@ class TestEnforceCardElementLimit:
     def test_enforce_card_element_limit_directly(self):
         """_enforce_card_element_limit trims a card dict directly."""
         # Build a card that would exceed 195 elements
-        from hermes_lark_streaming.cardkit.elements import build_unified_panel as _build_panel
-        from hermes_lark_streaming.cardkit.i18n import _LOCALES
+        from hermes_lark_streaming.cardkit.elements import (
+            build_unified_panel as _build_panel,
+        )
 
         panel = _build_panel(
             reasoning_rounds=self._make_rounds(25),
@@ -1282,7 +1285,6 @@ class TestTechStylePanelHeader:
         assert "agent loop" in title
 
     def test_header_with_rounds_uses_pipe_separator(self) -> None:
-        from hermes_lark_streaming.state.linear import ReasoningRound
         r = ReasoningRound(index=1, text="...")
         r.elapsed_ms = 500.0
         result = build_panel_header(reasoning_rounds=[r], tool_steps=[])
@@ -1292,7 +1294,6 @@ class TestTechStylePanelHeader:
         assert "1 rounds" in title
 
     def test_header_with_tools_and_rounds(self) -> None:
-        from hermes_lark_streaming.state.linear import ReasoningRound
         r1 = ReasoningRound(index=1, text="a")
         r1.elapsed_ms = 200.0
         r2 = ReasoningRound(index=2, text="b")

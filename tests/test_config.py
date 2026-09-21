@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import os
-import time
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
-from unittest.mock import MagicMock, patch
-
 from hermes_lark_streaming.config import Config, _get_hermes_config_path
 
 
@@ -327,8 +325,9 @@ class TestGetHermesConfigPath:
 
     def test_flush_interval_ms_custom(self, tmp_path: object) -> None:
         """flush_interval_ms 可配置."""
-        import yaml
         from pathlib import Path
+
+        import yaml
         config_path = Path(str(tmp_path)) / "config.yaml"
         config_path.write_text(yaml.dump({
             "hermes_lark_streaming": {"enabled": True, "flush_interval_ms": 300},
@@ -342,9 +341,10 @@ class TestGetHermesConfigPath:
 
     def test_flush_interval_ms_clamped(self, tmp_path: object) -> None:
         """flush_interval_ms 限制在 70~2000ms（70ms = 飞书官方 print_frequency_ms 默认值）."""
-        import yaml
         from pathlib import Path
         from unittest.mock import patch
+
+        import yaml
         config_path = Path(str(tmp_path)) / "config.yaml"
         config_path.write_text(yaml.dump({
             "hermes_lark_streaming": {"enabled": True, "flush_interval_ms": 30},
@@ -381,9 +381,10 @@ class TestConfigSingleton:
         走 _plugin_sec() 的属性（如 enabled）不生效。
         单例后所有 Config() 共享实例，reload 全局生效。
         """
-        import yaml
         from pathlib import Path
         from unittest.mock import patch
+
+        import yaml
         from hermes_lark_streaming.config.reader import Config
 
         config_path = Path(str(tmp_path)) / "config.yaml"

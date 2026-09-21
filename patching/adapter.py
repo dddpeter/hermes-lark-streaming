@@ -10,11 +10,11 @@ from typing import Any, Callable
 
 from .. import __version__
 from . import (
-    _msg_ctx,
     _gateway_cards,
     _gateway_cards_lock,
-    _logger,
     _get_config,
+    _logger,
+    _msg_ctx,
     _patched_feishu_classes,
     _send_result_ok,
 )
@@ -572,8 +572,8 @@ _clarify_timestamps: dict[str, float] = {}  # clarify_id → creation time (for 
 _CLARIFY_TTL_SEC = 30 * 60  # 30 分钟后未确认的追问自动清除
 
 # Backward-compatible aliases (old names used in tests)
-_clarify_answers = _clarify_selections  # noqa: F841
-_clarify_card_info = _clarify_card_msg_ids  # noqa: F841
+_clarify_answers = _clarify_selections
+_clarify_card_info = _clarify_card_msg_ids
 
 def _prune_expired_clarify() -> None:
     """清理过期的追问数据（超过 _CLARIFY_TTL_SEC 未确认的条目）."""
@@ -859,7 +859,7 @@ def _handle_clarify_card_action(
     """Handle a clarify card action callback — three-state flow."""
     # Import P2CardActionTriggerResponse and CallBackCard (may be None if SDK version doesn't support)
     try:
-        from lark_oapi.api.cardkit.v1 import P2CardActionTriggerResponse, CallBackCard
+        from lark_oapi.api.cardkit.v1 import CallBackCard, P2CardActionTriggerResponse
     except ImportError:
         P2CardActionTriggerResponse = None
         CallBackCard = None
@@ -950,8 +950,8 @@ def _handle_clarify_card_action(
         loop = getattr(adapter_instance, "_loop", None)
         if loop is not None:
             try:
-                from tools.clarify_gateway import resolve_gateway_clarify
                 from agent.async_utils import safe_schedule_threadsafe
+                from tools.clarify_gateway import resolve_gateway_clarify
 
                 async def _do_retry_resolve():
                     resolve_gateway_clarify(clarify_id, stored_selection)
@@ -1026,8 +1026,8 @@ def _handle_clarify_card_action(
         loop = getattr(adapter_instance, "_loop", None)
         if loop is not None:
             try:
-                from tools.clarify_gateway import resolve_gateway_clarify
                 from agent.async_utils import safe_schedule_threadsafe
+                from tools.clarify_gateway import resolve_gateway_clarify
 
                 async def _do_resolve():
                     resolve_gateway_clarify(clarify_id, choice_text)
@@ -1082,8 +1082,8 @@ def _handle_clarify_card_action(
         loop = getattr(adapter_instance, "_loop", None)
         if loop is not None:
             try:
-                from tools.clarify_gateway import resolve_gateway_clarify
                 from agent.async_utils import safe_schedule_threadsafe
+                from tools.clarify_gateway import resolve_gateway_clarify
 
                 async def _do_resolve_input():
                     resolve_gateway_clarify(clarify_id, input_text)
@@ -1139,8 +1139,8 @@ def _handle_clarify_card_action(
         loop = getattr(adapter_instance, "_loop", None)
         if loop is not None:
             try:
-                from tools.clarify_gateway import resolve_gateway_clarify
                 from agent.async_utils import safe_schedule_threadsafe
+                from tools.clarify_gateway import resolve_gateway_clarify
 
                 async def _do_resolve_button():
                     resolve_gateway_clarify(clarify_id, input_text)

@@ -10,26 +10,26 @@ from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from ..cardkit import (
-    ANSWER_ELEMENT_ID,
-    UNIFIED_PANEL_ELEMENT_ID,
     _LOADING_ELEMENT_ID,
     _LOADING_HINT_ELEMENT_ID,
+    ANSWER_ELEMENT_ID,
+    UNIFIED_PANEL_ELEMENT_ID,
+    _count_tag_objects,
+    _is_collapse_hint_child,
     _streaming_element,
+    build_preservative_seal_actions,
     build_streaming_card_v2,
     build_unified_panel,
-    build_preservative_seal_actions,
-    _count_tag_objects,
-    _enforce_card_element_limit,
-    # v1.7.0 (R2-12/R4): shared collapse-hint detection (bilingual-safe)
-    _is_collapse_hint_child,
 )
+
 # v1.7.0 (R4): bilingual collapse hint / truncation strings
 from ..cardkit.i18n import _T, _i18n
-from ..cardkit.md import _downgrade_tables, escape_markdown_asterisks, optimize_markdown_style
-from ..state.linear import UnifiedLinearState
-from ..state.text import split_reasoning_text
+from ..cardkit.md import (
+    _downgrade_tables,
+    escape_markdown_asterisks,
+    optimize_markdown_style,
+)
 from ..feishu import (
-    CARDKIT_SCHEMA_ERROR,
     CARDKIT_SEQUENCE_CONFLICT,
     CARDKIT_STREAMING_CLOSED,
     FeishuAPIError,
@@ -38,24 +38,24 @@ from ..feishu import (
     is_schema_error,
     is_terminal_api_code,
 )
-
+from ..state.linear import UnifiedLinearState
+from ..state.phase import TerminalReason
+from ..state.text import split_reasoning_text
 from .mixin import (
-    _TERMINAL,
     ABORTED,
     COMPLETED,
     COMPLETING,
-    CREATION_FAILED,
     CREATING,
+    CREATION_FAILED,
     IDLE,
     STREAMING,
     TERMINATED,
 )
-from ..state.phase import TerminalReason
 
 if TYPE_CHECKING:
     from ..config import Config
-    from ..state.session import CardSession
     from ..feishu import FeishuClient
+    from ..state.session import CardSession
 
 _logger = logging.getLogger("hermes_lark_streaming")
 

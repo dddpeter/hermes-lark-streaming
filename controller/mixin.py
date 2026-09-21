@@ -13,8 +13,8 @@ from ..cardkit import (
 
 # ── Phase constants — single source of truth ─────────────────────────
 from ..state.phase import (
-    CardPhase,
     _TERMINAL,
+    CardPhase,
 )
 
 IDLE = CardPhase.IDLE
@@ -28,8 +28,8 @@ TERMINATED = CardPhase.TERMINATED
 
 if TYPE_CHECKING:
     from ..config import Config
-    from ..state.session import CardSession
     from ..feishu import FeishuClient
+    from ..state.session import CardSession
 
 _logger = logging.getLogger("hermes_lark_streaming")
 

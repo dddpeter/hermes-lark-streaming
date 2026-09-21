@@ -7,12 +7,10 @@ the card/element data for test verification.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
 import time
-from typing import Any
 from dataclasses import dataclass, field
+from typing import Any
 
 _logger = logging.getLogger("hermes_lark_streaming")
 

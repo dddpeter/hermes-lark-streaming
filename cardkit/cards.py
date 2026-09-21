@@ -6,23 +6,17 @@ from typing import TYPE_CHECKING, Any
 
 from .elements import (
     ANSWER_ELEMENT_ID,
-    STREAMING_ELEMENT_ID,
     UNIFIED_PANEL_ELEMENT_ID,
-    _LOADING_ELEMENT_ID,
-    _LOADING_HINT_ELEMENT_ID,
-    _build_footer_elements,
     _build_unified_panel_placeholder,
-    _collapsible_panel,
     _count_tag_objects,
     _loading_element,
     _loading_hint_element,
     _streaming_element,
-    build_unified_panel,
 )
 from .i18n import _LOCALES, _T, _i18n, _t
 
 if TYPE_CHECKING:
-    from ..state.linear import ReasoningRound
+    pass
 
 __all__ = [
     'build_streaming_card_v2',

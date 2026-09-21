@@ -23,21 +23,19 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
-from hermes_lark_streaming.controller import StreamCardController
-from hermes_lark_streaming.controller.mixin import STREAMING
 from hermes_lark_streaming.cardkit import (
+    _LOADING_ELEMENT_ID,
+    _LOADING_HINT_ELEMENT_ID,
     ANSWER_ELEMENT_ID,
     UNIFIED_PANEL_ELEMENT_ID,
-    _LOADING_HINT_ELEMENT_ID,
-    _LOADING_ELEMENT_ID,
 )
+from hermes_lark_streaming.controller import StreamCardController
+from hermes_lark_streaming.controller.mixin import STREAMING
 from hermes_lark_streaming.feishu import FeishuAPIError
 
 # Reuse the helpers/loop-cleanup registry from test_controller (the conftest
 # autouse fixture closes loops registered there after each test).
 from tests.test_controller import _make_session, _setup_ctrl
-
 
 # ── P2-3: extract_not_found_element_id ────────────────────────────
 

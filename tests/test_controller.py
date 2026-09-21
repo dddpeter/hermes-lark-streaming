@@ -5,10 +5,15 @@ from __future__ import annotations
 import asyncio
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
+from hermes_lark_streaming.cardkit import (
+    _LOADING_ELEMENT_ID,
+    _LOADING_HINT_ELEMENT_ID,
+    ANSWER_ELEMENT_ID,
+    UNIFIED_PANEL_ELEMENT_ID,
+)
 from hermes_lark_streaming.controller import CardSession, StreamCardController
 from hermes_lark_streaming.controller.mixin import (
     ABORTED,
@@ -18,18 +23,10 @@ from hermes_lark_streaming.controller.mixin import (
     STREAMING,
 )
 from hermes_lark_streaming.feishu import (
-    CARDKIT_CONTENT_FAILED,
-    CARDKIT_ELEMENT_LIMIT,
     CARDKIT_SEQUENCE_CONFLICT,
     CARDKIT_STREAMING_CLOSED,
     FeishuAPIError,
     FeishuClient,
-)
-from hermes_lark_streaming.cardkit import (
-    ANSWER_ELEMENT_ID,
-    UNIFIED_PANEL_ELEMENT_ID,
-    _LOADING_HINT_ELEMENT_ID,
-    _LOADING_ELEMENT_ID,
 )
 from hermes_lark_streaming.state.linear import UnifiedLinearState
 
@@ -1148,7 +1145,6 @@ class TestDoLinearComplete:
         # No dirty data
         ctrl._sessions["msg_clean"] = session
 
-        stream_call_count_before = ctrl._client.cardkit_stream_element.call_count
 
         assert await ctrl._do_linear_complete(session) is True
 

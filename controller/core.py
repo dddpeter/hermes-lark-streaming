@@ -8,9 +8,21 @@ import threading
 import time
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Future as ConcurrentFuture
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..config import Config
+from ..feishu import (
+    FeishuClient,
+    FeishuClientConfig,
+)
+
+# v1.4.0 fix (问题3 根因1): _reactivate_session_for_continuation 预创建 unified_state
+from ..state.linear import UnifiedLinearState
+
+# v1.7.0 (R3-01): terminal reason/source recorded on every terminal path
+from ..state.phase import TerminalReason
+from ..state.text import TextState, strip_reasoning_tags
+from ..state.tooluse import ToolUseTracker
 from .linear_mixin import UnifiedControllerMixin
 from .mixin import (
     ABORTED,
@@ -20,16 +32,6 @@ from .mixin import (
     TERMINATED,
     ControllerMixin,
 )
-from ..feishu import (
-    FeishuClient,
-    FeishuClientConfig,
-)
-from ..state.text import TextState, strip_reasoning_tags
-from ..state.tooluse import ToolUseTracker
-# v1.4.0 fix (问题3 根因1): _reactivate_session_for_continuation 预创建 unified_state
-from ..state.linear import UnifiedLinearState
-# v1.7.0 (R3-01): terminal reason/source recorded on every terminal path
-from ..state.phase import TerminalReason
 
 _logger = logging.getLogger("hermes_lark_streaming")
 
@@ -40,7 +42,10 @@ _INTERRUPT_MAP_MAX = 200
 # 只兜底极端场景（目标永不到达终态时避免 map 无限增长）。
 _CONTINUATION_MAP_MAX = 200
 
-from ..state.session import CardSession  # noqa: F401 — re-exported for backward compatibility
+from ..state.session import (  # noqa: E402 — 置于常量块后系历史布局，顺序调整有循环导入风险
+    CardSession,
+)
+
 
 class StreamCardController(ControllerMixin, UnifiedControllerMixin):
     """流式卡片控制器 — 管理多条消息的卡片生命周期."""

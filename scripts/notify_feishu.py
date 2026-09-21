@@ -27,7 +27,8 @@ try:
                 PLUGIN_VERSION = _line.split(":", 1)[1].strip().strip('"').strip("'")
                 break
 except Exception:
-    import sys, traceback
+    import sys
+    import traceback
     traceback.print_exc(file=sys.stderr)
 
 # ── 从环境变量读取配置 ──
@@ -182,7 +183,8 @@ except Exception:
     pass
 
 # Gitee MR 合并去重
-import re as _re
+import re as _re  # noqa: E402 — 脚本式布局，非包入口
+
 
 def _strip_mr_prefix(msg: str) -> str:
     return _re.sub(r"^!\d+\s+", "", msg)

@@ -7,7 +7,6 @@ import threading
 import time
 
 import pytest
-
 from hermes_lark_streaming.flush import (
     BATCH_AFTER_GAP_MS,
     LONG_GAP_MS,

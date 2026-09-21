@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -241,8 +240,9 @@ def register(ctx: "PluginContext") -> None:
 
     # Pre-warm FeishuClient at registration to skip ~50-100ms latency on first card.
     try:
-        from ..controller import get_controller
         import asyncio
+
+        from ..controller import get_controller
 
         ctrl = get_controller()
         if ctrl.enabled:

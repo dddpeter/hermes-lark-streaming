@@ -13,13 +13,13 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
-from tests.e2e.framework import E2ETestRunner
 from hermes_lark_streaming.cardkit import (
     build_clarify_card,
-    build_clarify_submitted_card,
     build_clarify_confirmed_card,
+    build_clarify_submitted_card,
 )
+
+from tests.e2e.framework import E2ETestRunner
 
 
 @pytest.fixture
@@ -225,7 +225,6 @@ class TestClarifyDispatchPatch:
         the v1.6.0 fix — if the wrapper isn't installed, clarify falls back
         to hermes' plain-text BasePlatformAdapter.send_clarify."""
         from hermes_lark_streaming import patching as P
-        from hermes_lark_streaming.patching.adapter import _wrap_feishu_adapter_send_clarify
 
         class FakeFeishuAdapterClass:
             """Simulates the real (deferred-loaded) FeishuAdapter class B.
@@ -267,7 +266,9 @@ class TestClarifyDispatchPatch:
         subsequent send_clarify call on its instance goes through the
         plugin wrapper, NOT the plain-text fallback."""
         from hermes_lark_streaming import patching as P
-        from hermes_lark_streaming.patching import _wrap_platform_registry_create_adapter
+        from hermes_lark_streaming.patching import (
+            _wrap_platform_registry_create_adapter,
+        )
 
         class FakeRealFeishuAdapter:
             """模拟 hermes v0.17+ deferred loading 产生的真身 class B。

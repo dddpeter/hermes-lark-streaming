@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from hermes_lark_streaming.cardkit import build_gateway_card
 
 
@@ -203,7 +201,11 @@ class TestGatewayCardRegistry:
     """Test Phase 2: gateway card registry for edit_message support."""
 
     def test_register_and_lookup(self):
-        from hermes_lark_streaming.patching import _register_gateway_card, _gateway_cards, _gateway_cards_lock
+        from hermes_lark_streaming.patching import (
+            _gateway_cards,
+            _gateway_cards_lock,
+            _register_gateway_card,
+        )
         # Register a card
         _register_gateway_card("msg_test_123", chat_id="chat_abc", card_id="card_xyz", category="error")
         # Look it up
@@ -218,14 +220,23 @@ class TestGatewayCardRegistry:
         _unregister_gateway_card("msg_test_123")
 
     def test_unregister_removes_entry(self):
-        from hermes_lark_streaming.patching import _register_gateway_card, _unregister_gateway_card, _gateway_cards, _gateway_cards_lock
+        from hermes_lark_streaming.patching import (
+            _gateway_cards,
+            _gateway_cards_lock,
+            _register_gateway_card,
+            _unregister_gateway_card,
+        )
         _register_gateway_card("msg_test_456", chat_id="chat_def", card_id=None, category="system")
         _unregister_gateway_card("msg_test_456")
         with _gateway_cards_lock:
             assert _gateway_cards.get("msg_test_456") is None
 
     def test_register_empty_id_is_noop(self):
-        from hermes_lark_streaming.patching import _register_gateway_card, _gateway_cards, _gateway_cards_lock
+        from hermes_lark_streaming.patching import (
+            _gateway_cards,
+            _gateway_cards_lock,
+            _register_gateway_card,
+        )
         _register_gateway_card("", chat_id="chat_ghi", card_id=None, category="system")
         with _gateway_cards_lock:
             assert "" not in _gateway_cards

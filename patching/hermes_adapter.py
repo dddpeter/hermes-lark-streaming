@@ -1,12 +1,13 @@
 """Hermes compatibility adapter — isolates all Hermes internal interface access."""
 
 from __future__ import annotations
+
 import importlib
 import importlib.util
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 _logger = logging.getLogger("hermes_lark_streaming")
 
@@ -154,8 +155,8 @@ class HermesCompat:
         
         # Strategy 3: Standard import
         try:
-            from agent.conversation_loop import run_conversation as _func
             import agent.conversation_loop as _mod
+            from agent.conversation_loop import run_conversation as _func
             self.conversation_loop_module = _mod
             self.conversation_loop_func = _func
         except (ImportError, AttributeError):

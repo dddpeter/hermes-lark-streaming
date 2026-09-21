@@ -11,8 +11,6 @@ from __future__ import annotations
 import threading
 import time
 
-
-
 # ── _sessions lock tests ──
 
 
@@ -21,9 +19,10 @@ class TestSessionLockThreadSafety:
 
     def test_concurrent_put_get(self) -> None:
         """10 threads each do 100 put+get cycles. All puts visible after join."""
+        import asyncio
+
         from hermes_lark_streaming.controller.core import StreamCardController
         from hermes_lark_streaming.state.session import CardSession
-        import asyncio
 
         ctrl = StreamCardController.__new__(StreamCardController)
         ctrl._sessions = {}
@@ -208,8 +207,8 @@ class TestClarifyLockThreadSafety:
     def test_concurrent_clarify_write_read(self) -> None:
         """5 writers + 5 readers on _clarify_choices. No exceptions, all writes visible."""
         from hermes_lark_streaming.patching.adapter import (
-            _clarify_lock,
             _clarify_choices,
+            _clarify_lock,
             _clarify_questions,
         )
 
@@ -261,8 +260,8 @@ class TestClarifyLockThreadSafety:
     def test_concurrent_prune_during_access(self) -> None:
         """1 prune thread + 3 access threads. No RuntimeError."""
         from hermes_lark_streaming.patching.adapter import (
-            _clarify_lock,
             _clarify_choices,
+            _clarify_lock,
             _clarify_questions,
             _clarify_timestamps,
             _prune_expired_clarify,
@@ -326,10 +325,10 @@ class TestClarifyLockThreadSafety:
     def test_clarify_lock_protects_all_five_dicts(self) -> None:
         """Verify concurrent access to all 5 clarify dicts doesn't corrupt."""
         from hermes_lark_streaming.patching.adapter import (
-            _clarify_lock,
-            _clarify_choices,
-            _clarify_questions,
             _clarify_card_msg_ids,
+            _clarify_choices,
+            _clarify_lock,
+            _clarify_questions,
             _clarify_selections,
             _clarify_timestamps,
         )

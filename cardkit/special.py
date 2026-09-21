@@ -5,8 +5,8 @@ from __future__ import annotations
 import ast
 from typing import Any
 
-from .i18n import _LOCALES, _T, _i18n, _t
 from .elements import _escape_md
+from .i18n import _LOCALES, _T, _i18n
 from .md import (
     _MAX_CRON_TABLES,
     _downgrade_tables,
