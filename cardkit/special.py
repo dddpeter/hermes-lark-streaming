@@ -15,20 +15,27 @@ from .md import (
 )
 
 __all__ = [
-    'build_cron_card',
-    'build_gateway_card',
-    'build_clarify_card',
-    'build_clarify_submitted_card',
-    'build_clarify_confirmed_card',
-    'normalize_clarify_choices',
+    "build_cron_card",
+    "build_gateway_card",
+    "build_clarify_card",
+    "build_clarify_submitted_card",
+    "build_clarify_confirmed_card",
+    "normalize_clarify_choices",
 ]
 
 _CLARIFY_DICT_FIELD_PRIORITY = (
-    "label", "description", "text", "title",
-    "name", "path", "value", "id",
+    "label",
+    "description",
+    "text",
+    "title",
+    "name",
+    "path",
+    "value",
+    "id",
 )
 
 _CLARIFY_MAX_CHOICE_LEN = 80
+
 
 def _normalize_choice(choice: Any) -> str:
     """Normalize clarify choice to readable string. Handles: plain string,
@@ -63,6 +70,7 @@ def _normalize_choice(choice: Any) -> str:
 
     return text
 
+
 def _extract_readable_from_dict(d: dict) -> str:
     """Extract readable string field from dict (priority order, strings only)."""
     for field in _CLARIFY_DICT_FIELD_PRIORITY:
@@ -70,6 +78,7 @@ def _extract_readable_from_dict(d: dict) -> str:
         if isinstance(val, str) and val.strip():
             return val.strip()
     return ""
+
 
 def normalize_clarify_choices(choices: list[str] | None) -> list[str]:
     """Normalize choices for display + AI resolution. Filters empty."""
@@ -82,6 +91,7 @@ def normalize_clarify_choices(choices: list[str] | None) -> list[str]:
             normalized.append(n)
     return normalized
 
+
 def build_cron_card(content: str) -> dict[str, Any]:
     """Cron 推送用的极简静态卡片 — schema 2.0，仅 markdown 内容."""
     card: dict[str, Any] = {
@@ -93,7 +103,9 @@ def build_cron_card(content: str) -> dict[str, Any]:
         summary = content[:120].replace("\n", " ").replace("```", "").strip()
         if summary:
             card["config"]["summary"] = {"content": summary}
-        for chunk in _split_long_text(_downgrade_tables(optimize_markdown_style(content), limit=_MAX_CRON_TABLES)):
+        for chunk in _split_long_text(
+            _downgrade_tables(optimize_markdown_style(content), limit=_MAX_CRON_TABLES)
+        ):
             if chunk.strip():
                 card["body"]["elements"].append({"tag": "markdown", "content": chunk})
     # v1.7.0 (R4-10, E2E T7 铁证): body.elements=[] 被飞书 Card 2.0 直接拒绝
@@ -104,24 +116,31 @@ def build_cron_card(content: str) -> dict[str, Any]:
         card["body"]["elements"].append({"tag": "markdown", "content": " "})
     return card
 
-def build_gateway_card(content: str, *, category: str = "", status_label: str = "", status_emoji: str = "") -> dict[str, Any]:
+
+def build_gateway_card(
+    content: str, *, category: str = "", status_label: str = "", status_emoji: str = ""
+) -> dict[str, Any]:
     """Gateway-internal message card — lightweight, static, no streaming. For slash
     command replies, auth, session, errors. category retained for reaction routing."""
     elements: list[dict] = []
 
     if status_label and status_emoji:
-        elements.append({
-            "tag": "div",
-            "text": {
-                "tag": "plain_text",
-                "content": f"{status_emoji} {status_label}",
-                "text_color": "turquoise",
-                "text_size": "notation",
-            },
-        })
+        elements.append(
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "plain_text",
+                    "content": f"{status_emoji} {status_label}",
+                    "text_color": "turquoise",
+                    "text_size": "notation",
+                },
+            }
+        )
 
     if content.strip():
-        for chunk in _split_long_text(_downgrade_tables(optimize_markdown_style(content), limit=_MAX_CRON_TABLES)):
+        for chunk in _split_long_text(
+            _downgrade_tables(optimize_markdown_style(content), limit=_MAX_CRON_TABLES)
+        ):
             if chunk.strip():
                 elements.append({"tag": "markdown", "content": chunk})
 
@@ -131,7 +150,11 @@ def build_gateway_card(content: str, *, category: str = "", status_label: str = 
         "body": {"elements": elements},
     }
 
-    summary = content[:120].replace("\n", " ").replace("```", "").strip() if content.strip() else ""
+    summary = (
+        content[:120].replace("\n", " ").replace("```", "").strip()
+        if content.strip()
+        else ""
+    )
     if summary:
         card["config"]["summary"] = {"content": summary}
 
@@ -143,24 +166,29 @@ def build_gateway_card(content: str, *, category: str = "", status_label: str = 
 
     return card
 
-def build_clarify_card(*, question: str, choices: list[str] | None = None, clarify_id: str = "") -> dict[str, Any]:
+
+def build_clarify_card(
+    *, question: str, choices: list[str] | None = None, clarify_id: str = ""
+) -> dict[str, Any]:
     """构建 Clarify 待选择态卡片 (State 1: Pending). 三态: 标题/选项列表/快速选择下拉/
     自定义输入. choices 经 normalize + escape for lark_md. select_static 用 plain_text."""
     elements: list[dict] = []
 
-    elements.append({
-        "tag": "div",
-        "icon": {
-            "tag": "standard_icon",
-            "token": "info_outlined",
-            "size": "20px 20px",
-            "color": "blue",
-        },
-        "text": {
-            "tag": "lark_md",
-            "content": f"**{_escape_md(question)}**",
-        },
-    })
+    elements.append(
+        {
+            "tag": "div",
+            "icon": {
+                "tag": "standard_icon",
+                "token": "info_outlined",
+                "size": "20px 20px",
+                "color": "blue",
+            },
+            "text": {
+                "tag": "lark_md",
+                "content": f"**{_escape_md(question)}**",
+            },
+        }
+    )
 
     # Defense in depth: adapter also normalizes, but card builders must be safe.
     normalized_choices = normalize_clarify_choices(choices)
@@ -171,19 +199,23 @@ def build_clarify_card(*, question: str, choices: list[str] | None = None, clari
             label = chr(ord("A") + i) if i < 26 else str(i + 1)
             option_lines.append(f"{label}. {_escape_md(choice)}")
         options_md = "\n".join(option_lines)
-        elements.append({
-            "tag": "markdown",
-            "content": options_md,
-        })
+        elements.append(
+            {
+                "tag": "markdown",
+                "content": options_md,
+            }
+        )
 
         # select_static dropdown (plain_text, no markdown).
         options: list[dict] = []
         for i, choice in enumerate(normalized_choices):
             label = chr(ord("A") + i) if i < 26 else str(i + 1)
-            options.append({
-                "text": {"tag": "plain_text", "content": f"{label}. {choice}"},
-                "value": str(i),
-            })
+            options.append(
+                {
+                    "text": {"tag": "plain_text", "content": f"{label}. {choice}"},
+                    "value": str(i),
+                }
+            )
 
         en_placeholder, zh_placeholder = _T["clarify_select_placeholder"]
         select_el: dict[str, Any] = {
@@ -195,13 +227,15 @@ def build_clarify_card(*, question: str, choices: list[str] | None = None, clari
                 "i18n_content": _i18n(en_placeholder, zh_placeholder),
             },
             "options": options,
-            "behaviors": [{
-                "type": "callback",
-                "value": {
-                    "hermes_clarify_action": "select",
-                    "clarify_id": clarify_id,
-                },
-            }],
+            "behaviors": [
+                {
+                    "type": "callback",
+                    "value": {
+                        "hermes_clarify_action": "select",
+                        "clarify_id": clarify_id,
+                    },
+                }
+            ],
         }
         elements.append(select_el)
 
@@ -216,13 +250,15 @@ def build_clarify_card(*, question: str, choices: list[str] | None = None, clari
         },
         "max_length": 500,
         "name": "clarify_input",
-        "behaviors": [{
-            "type": "callback",
-            "value": {
-                "hermes_clarify_action": "input_submit",
-                "clarify_id": clarify_id,
-            },
-        }],
+        "behaviors": [
+            {
+                "type": "callback",
+                "value": {
+                    "hermes_clarify_action": "input_submit",
+                    "clarify_id": clarify_id,
+                },
+            }
+        ],
     }
     elements.append(input_el)
 
@@ -236,7 +272,10 @@ def build_clarify_card(*, question: str, choices: list[str] | None = None, clari
     }
     return card
 
-def build_clarify_submitted_card(*, question: str, selected: str, clarify_id: str = "") -> dict[str, Any]:
+
+def build_clarify_submitted_card(
+    *, question: str, selected: str, clarify_id: str = ""
+) -> dict[str, Any]:
     """构建 Clarify 已提交态卡片 (State 2: Submitted/Soft Lock). 标题 + 用户选择 +
     "已提交" 提示 + 重试按钮."""
     # Escape selected for lark_md (rendered inside "已选择: {}" template).
@@ -296,13 +335,15 @@ def build_clarify_submitted_card(*, question: str, selected: str, clarify_id: st
                 "i18n_content": _i18n(en_retry, zh_retry),
             },
             "type": "primary",
-            "behaviors": [{
-                "type": "callback",
-                "value": {
-                    "hermes_clarify_action": "retry_submit",
-                    "clarify_id": clarify_id,
-                },
-            }],
+            "behaviors": [
+                {
+                    "type": "callback",
+                    "value": {
+                        "hermes_clarify_action": "retry_submit",
+                        "clarify_id": clarify_id,
+                    },
+                }
+            ],
         },
     ]
 
@@ -315,6 +356,7 @@ def build_clarify_submitted_card(*, question: str, selected: str, clarify_id: st
         "body": {"elements": elements},
     }
     return card
+
 
 def build_clarify_confirmed_card(*, question: str, selected: str) -> dict[str, Any]:
     """构建 Clarify 已确认态卡片 (State 3: Confirmed/Hard Lock). 标题 + 选择 + "已确认"."""

@@ -20,6 +20,7 @@ from hermes_lark_streaming.feishu import guard as _guard_module
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _clear_cache():
     """Ensure the global unavailable cache is empty before and after each test."""
@@ -31,6 +32,7 @@ def _clear_cache():
 # ===========================================================================
 # mark_unavailable / is_unavailable
 # ===========================================================================
+
 
 class TestMarkUnavailable:
     def test_mark_then_check(self) -> None:
@@ -114,6 +116,7 @@ class TestIsUnavailable:
 # extract_api_code
 # ===========================================================================
 
+
 class TestExtractApiCode:
     def test_none_returns_none(self) -> None:
         assert extract_api_code(None) is None
@@ -171,6 +174,7 @@ class TestExtractApiCode:
 # is_terminal_api_code
 # ===========================================================================
 
+
 class TestIsTerminalApiCode:
     def test_code_231003(self) -> None:
         assert is_terminal_api_code(231003) is True
@@ -194,6 +198,7 @@ class TestIsTerminalApiCode:
 # ===========================================================================
 # UnavailableGuard
 # ===========================================================================
+
 
 class TestUnavailableGuardShouldSkip:
     def _make_guard(
@@ -323,7 +328,9 @@ class TestUnavailableGuardTerminate:
         assert is_unavailable("msg_reply") is True
 
     def test_marks_card_msg_id_as_unavailable(self) -> None:
-        guard = self._make_guard(reply_to_message_id="msg_reply", card_msg_id="msg_card")
+        guard = self._make_guard(
+            reply_to_message_id="msg_reply", card_msg_id="msg_card"
+        )
         err = RuntimeError("deleted")
         err.code = 231003  # type: ignore[attr-defined]
         guard.terminate("test", err=err)
@@ -331,7 +338,9 @@ class TestUnavailableGuardTerminate:
 
     def test_marks_both_ids_as_unavailable(self) -> None:
         """When both reply_to_message_id and card_msg_id exist, both are marked."""
-        guard = self._make_guard(reply_to_message_id="msg_reply", card_msg_id="msg_card")
+        guard = self._make_guard(
+            reply_to_message_id="msg_reply", card_msg_id="msg_card"
+        )
         err = RuntimeError("recalled")
         err.code = 230011  # type: ignore[attr-defined]
         guard.terminate("test", err=err)
@@ -356,7 +365,9 @@ class TestUnavailableGuardTerminate:
 
     def test_terminal_code_from_card_cache_when_no_error(self) -> None:
         """When err is None but card_msg_id is in cache with terminal code."""
-        guard = self._make_guard(reply_to_message_id="msg_reply", card_msg_id="msg_card")
+        guard = self._make_guard(
+            reply_to_message_id="msg_reply", card_msg_id="msg_card"
+        )
         mark_unavailable("msg_card", MSG_NOT_FOUND)
         assert guard.terminate("test", err=None) is True
         assert guard._terminated is True

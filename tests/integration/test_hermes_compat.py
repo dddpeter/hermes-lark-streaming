@@ -100,7 +100,10 @@ def _ast_module_has_function(tree: ast.Module, func_name: str) -> bool:
 
 
 def _ast_method_sig_has_param(
-    tree: ast.Module, class_name: str, method_name: str, param_name: str,
+    tree: ast.Module,
+    class_name: str,
+    method_name: str,
+    param_name: str,
 ) -> bool:
     """Check whether a class method's signature in the AST declares *param_name*.
 
@@ -123,11 +126,16 @@ def _ast_method_sig_has_param(
 
 
 def _ast_function_sig_has_param(
-    tree: ast.Module, func_name: str, param_name: str,
+    tree: ast.Module,
+    func_name: str,
+    param_name: str,
 ) -> bool:
     """Check whether a top-level function's signature in the AST declares *param_name*."""
     for node in ast.iter_child_nodes(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == func_name
+        ):
             args = node.args
             all_args = list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs)
             return any(a.arg == param_name for a in all_args)
@@ -142,7 +150,9 @@ def hermes_src() -> Path:
     """Provide the Hermes source directory, skipping if not available."""
     d = _hermes_src_dir()
     if d is None:
-        pytest.skip("HERMES_SRC_DIR not set or not a directory — skipping integration tests")
+        pytest.skip(
+            "HERMES_SRC_DIR not set or not a directory — skipping integration tests"
+        )
     return d
 
 
@@ -215,7 +225,9 @@ class TestGatewayRunner:
             "GatewayRunner._handle_message not found (AST analysis)"
         )
 
-    def test_gateway_runner_has_handle_message_with_agent(self, hermes_src: Path) -> None:
+    def test_gateway_runner_has_handle_message_with_agent(
+        self, hermes_src: Path
+    ) -> None:
         """GatewayRunner should have _handle_message_with_agent method."""
         try:
             from gateway.run import GatewayRunner
@@ -228,9 +240,9 @@ class TestGatewayRunner:
             pass
         tree = _parse_ast(hermes_src, "gateway.run")
         assert tree is not None, "gateway/run.py not found"
-        assert _ast_class_has_method(tree, "GatewayRunner", "_handle_message_with_agent"), (
-            "GatewayRunner._handle_message_with_agent not found (AST analysis)"
-        )
+        assert _ast_class_has_method(
+            tree, "GatewayRunner", "_handle_message_with_agent"
+        ), "GatewayRunner._handle_message_with_agent not found (AST analysis)"
 
     def test_gateway_runner_has_run_agent(self, hermes_src: Path) -> None:
         """GatewayRunner should have _run_agent method."""
@@ -259,10 +271,10 @@ class TestGatewayRunner:
 # 旧的两文件扫描面上 ast.Attribute 节点数归零。按 _FEISHU_ADAPTER_MODULE_CANDIDATES
 # 的模式扩候选取并集；候选文件在旧版 hermes 缺失时自动跳过（纯增量，不改旧语义）。
 _AIAgent_CALLBACK_MODULE_CANDIDATES = [
-    "run_agent",                     # AIAgent 定义 + __init__ 构造回调参
-    "agent.conversation_loop",       # v0.10+ 会话循环（历史赋值点，v0.21.1 起归零）
-    "gateway.run_turn_runner",       # v0.21.1+ _wire_turn_agent_callbacks（4/5 赋值点）
-    "agent.agent_init",              # v0.21.1+ AIAgent.__init__ 委托实现（background_review 赋值）
+    "run_agent",  # AIAgent 定义 + __init__ 构造回调参
+    "agent.conversation_loop",  # v0.10+ 会话循环（历史赋值点，v0.21.1 起归零）
+    "gateway.run_turn_runner",  # v0.21.1+ _wire_turn_agent_callbacks（4/5 赋值点）
+    "agent.agent_init",  # v0.21.1+ AIAgent.__init__ 委托实现（background_review 赋值）
 ]
 
 
@@ -374,12 +386,14 @@ class TestAIAgent:
 # v1.4.0: FeishuAdapter 实际定义位置 —— hermes v0.17.0+ 在 plugins.platforms.feishu.adapter
 # （源码路径），旧版在 gateway.platforms.feishu。AST fallback 按顺序尝试所有候选路径。
 _FEISHU_ADAPTER_MODULE_CANDIDATES = [
-    "gateway.platforms.feishu",         # Legacy path (Hermes < v0.17)
-    "plugins.platforms.feishu.adapter", # v0.17+ source path (always available)
+    "gateway.platforms.feishu",  # Legacy path (Hermes < v0.17)
+    "plugins.platforms.feishu.adapter",  # v0.17+ source path (always available)
 ]
 
 
-def _resolve_feishu_adapter_ast(hermes_src: Path) -> tuple[ast.Module | None, str | None]:
+def _resolve_feishu_adapter_ast(
+    hermes_src: Path,
+) -> tuple[ast.Module | None, str | None]:
     """Return (ast_tree, module_path) for the first candidate where FeishuAdapter source is found.
 
     v1.4.0: 抽取为独立 helper —— hermes v0.17.0+ 重构后 FeishuAdapter 实际定义在
@@ -494,10 +508,26 @@ class TestMonkeyPatchTargets:
         ("gateway.run", "GatewayRunner", "_run_background_task"),
         # Reaction methods: Hermes renamed public → private in newer versions
         # At least one of each pair should exist for the feature to work
-        ("gateway.platforms.feishu", "FeishuAdapter", "add_reaction"),       # old public name
-        ("gateway.platforms.feishu", "FeishuAdapter", "_add_reaction"),      # new private name
-        ("gateway.platforms.feishu", "FeishuAdapter", "delete_reaction"),    # old public name
-        ("gateway.platforms.feishu", "FeishuAdapter", "_remove_reaction"),   # new private name
+        (
+            "gateway.platforms.feishu",
+            "FeishuAdapter",
+            "add_reaction",
+        ),  # old public name
+        (
+            "gateway.platforms.feishu",
+            "FeishuAdapter",
+            "_add_reaction",
+        ),  # new private name
+        (
+            "gateway.platforms.feishu",
+            "FeishuAdapter",
+            "delete_reaction",
+        ),  # old public name
+        (
+            "gateway.platforms.feishu",
+            "FeishuAdapter",
+            "_remove_reaction",
+        ),  # new private name
     ]
 
     # v1.4.0: FeishuAdapter 实际定义位置 —— 复用模块级 _FEISHU_ADAPTER_MODULE_CANDIDATES
@@ -517,7 +547,11 @@ class TestMonkeyPatchTargets:
         ids=[f"{c}.{m}" for _, c, m in CLASS_METHOD_TARGETS],
     )
     def test_required_class_method_exists(
-        self, hermes_src: Path, module_path: str, class_name: str, method_name: str,
+        self,
+        hermes_src: Path,
+        module_path: str,
+        class_name: str,
+        method_name: str,
     ) -> None:
         """Required class method must exist (import or AST).
 
@@ -550,14 +584,18 @@ class TestMonkeyPatchTargets:
                 if alt_path == module_path:
                     continue  # already tried above
                 alt_tree = _parse_ast(hermes_src, alt_path)
-                if alt_tree is not None and _ast_class_has_method(alt_tree, class_name, method_name):
+                if alt_tree is not None and _ast_class_has_method(
+                    alt_tree, class_name, method_name
+                ):
                     return  # Found in alternative FeishuAdapter path
             # v1.4.0: 继承链回退 —— FeishuAdapter 继承自 BasePlatformAdapter，
             # send_clarify 等方法可能在 base class 里定义（不在 FeishuAdapter class body）
             for base_path in self._BASE_PLATFORM_ADAPTER_FALLBACK_PATHS:
                 base_tree = _parse_ast(hermes_src, base_path)
                 if base_tree is not None and _ast_class_has_method(
-                    base_tree, "BasePlatformAdapter", method_name,
+                    base_tree,
+                    "BasePlatformAdapter",
+                    method_name,
                 ):
                     return  # Found in BasePlatformAdapter (inherited)
         # Nothing found — fail with clear message
@@ -576,7 +614,10 @@ class TestMonkeyPatchTargets:
         ids=[f"{m}.{f}" for m, f in FUNCTION_TARGETS],
     )
     def test_required_function_exists(
-        self, hermes_src: Path, module_path: str, func_name: str,
+        self,
+        hermes_src: Path,
+        module_path: str,
+        func_name: str,
     ) -> None:
         """Required module-level function must exist (import or AST)."""
         # Try import
@@ -601,7 +642,11 @@ class TestMonkeyPatchTargets:
         ids=[f"{c}.{m} (optional)" for _, c, m in OPTIONAL_CLASS_METHOD_TARGETS],
     )
     def test_optional_class_method_exists(
-        self, hermes_src: Path, module_path: str, class_name: str, method_name: str,
+        self,
+        hermes_src: Path,
+        module_path: str,
+        class_name: str,
+        method_name: str,
     ) -> None:
         """Optional class method — warn if missing, but don't fail."""
         # v1.7.0: FeishuAdapter targets try ALL candidate module paths — the
@@ -625,7 +670,9 @@ class TestMonkeyPatchTargets:
                 pass
             # Fallback: AST
             tree = _parse_ast(hermes_src, candidate)
-            if tree is not None and _ast_class_has_method(tree, class_name, method_name):
+            if tree is not None and _ast_class_has_method(
+                tree, class_name, method_name
+            ):
                 return  # Found via AST
         # Not found — issue a warning (not a failure)
         pytest.skip(
@@ -646,8 +693,11 @@ class TestMonkeyPatchTargets:
 # 但两个 run_conversation 生产面在 v0.17.0~v0.21.1 全程显式声明（经
 # run_turn_runner 的 kwargs 透传链仍原样到达）。
 _RUN_CONVERSATION_METHOD_CANDIDATES = [
-    ("run_agent", "AIAgent"),                # v0.17.0~v0.21.0：run_agent.py 直接定义
-    ("agent.turn_facade", "TurnFacadeMixin"),  # v0.21.1+：拆分后 AIAgent.run_conversation 经 MRO 命中
+    ("run_agent", "AIAgent"),  # v0.17.0~v0.21.0：run_agent.py 直接定义
+    (
+        "agent.turn_facade",
+        "TurnFacadeMixin",
+    ),  # v0.21.1+：拆分后 AIAgent.run_conversation 经 MRO 命中
 ]
 
 _RUN_CONVERSATION_FUNCTION_CANDIDATES = [
@@ -679,7 +729,9 @@ def _persist_param_supported(hermes_src: Path, param_name: str) -> bool | None:
     try:
         import agent.conversation_loop as _cl_mod
 
-        surfaces.append(("agent.conversation_loop.run_conversation", _cl_mod.run_conversation))
+        surfaces.append(
+            ("agent.conversation_loop.run_conversation", _cl_mod.run_conversation)
+        )
     except (ImportError, AttributeError):
         pass
 
@@ -693,13 +745,18 @@ def _persist_param_supported(hermes_src: Path, param_name: str) -> bool | None:
     for mod_path, class_name in _RUN_CONVERSATION_METHOD_CANDIDATES:
         tree = _parse_ast(hermes_src, mod_path)
         if tree is not None and _ast_method_sig_has_param(
-            tree, class_name, "run_conversation", param_name,
+            tree,
+            class_name,
+            "run_conversation",
+            param_name,
         ):
             return True
     for mod_path in _RUN_CONVERSATION_FUNCTION_CANDIDATES:
         tree = _parse_ast(hermes_src, mod_path)
         if tree is not None and _ast_function_sig_has_param(
-            tree, "run_conversation", param_name,
+            tree,
+            "run_conversation",
+            param_name,
         ):
             return True
     return None
@@ -716,7 +773,9 @@ class TestV017SignatureChanges:
       迁移（v1.8.2 方案 A）。
     """
 
-    def test_run_conversation_has_persist_user_timestamp_param(self, hermes_src: Path) -> None:
+    def test_run_conversation_has_persist_user_timestamp_param(
+        self, hermes_src: Path
+    ) -> None:
         """run_conversation 双生产面应支持 persist_user_timestamp 参数（v0.16.0+）.
 
         v1.8.2: 检测点从 GatewayRunner._run_agent 迁移到插件生产代码的真实
@@ -730,7 +789,9 @@ class TestV017SignatureChanges:
             "经 _run_agent 的 **turn_kwargs 透传，终至此处），需人工复核"
         )
 
-    def test_run_conversation_has_persist_user_message_param(self, hermes_src: Path) -> None:
+    def test_run_conversation_has_persist_user_message_param(
+        self, hermes_src: Path
+    ) -> None:
         """run_conversation 双生产面应支持 persist_user_message 参数（v0.17.0 新增）.
 
         v1.8.2: 与 persist_user_timestamp 同步迁移检测面。v0.21.1 泛化
@@ -750,10 +811,12 @@ class TestV017SignatureChanges:
         """run_conversation 仍可调用（v0.17.0 重构后验证入口没变）."""
         try:
             from agent.conversation_loop import run_conversation  # noqa: F401
+
             return
         except (ImportError, AttributeError):
             pass
         from run_agent import AIAgent
+
         assert hasattr(AIAgent, "run_conversation"), (
             "AIAgent.run_conversation 不存在（v0.17.0 重构可能移除了入口）"
         )

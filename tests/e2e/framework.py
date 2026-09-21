@@ -190,11 +190,13 @@ class E2ETestRunner:
         self._real_open_id = open_id
 
         # Create real FeishuClient
-        client = FeishuClient(FeishuClientConfig(
-            app_id=app_id,
-            app_secret=app_secret,
-            base_url=base_url,
-        ))
+        client = FeishuClient(
+            FeishuClientConfig(
+                app_id=app_id,
+                app_secret=app_secret,
+                base_url=base_url,
+            )
+        )
         self._controller._client = client
         self._controller._initialized = True
 
@@ -209,7 +211,9 @@ class E2ETestRunner:
             _logger.info(
                 "HLS e2e: REAL Feishu API ready — anchor message sent "
                 "(app_id=%s..., chat=%s, open_id=%s, anchor_msg=%s)",
-                app_id[:8], chat_id[:12], open_id[:12] if open_id else "(none)",
+                app_id[:8],
+                chat_id[:12],
+                open_id[:12] if open_id else "(none)",
                 self._real_anchor_message_id[:12],
             )
         except Exception as e:
@@ -252,9 +256,7 @@ class E2ETestRunner:
         )
         resp = await client._client.im.v1.message.acreate(request)
         if not resp.success():
-            raise RuntimeError(
-                f"发送 anchor 消息失败: code={resp.code} msg={resp.msg}"
-            )
+            raise RuntimeError(f"发送 anchor 消息失败: code={resp.code} msg={resp.msg}")
         if not resp.data or not resp.data.message_id:
             raise RuntimeError("发送 anchor 消息失败: 响应缺少 message_id")
         return str(resp.data.message_id)
@@ -301,24 +303,38 @@ class E2ETestRunner:
 
         async def _cardkit_create(card):
             return await srv.cardkit_create(card)
+
         async def _reply_card_by_id(mid, cid):
             return await srv.reply_card_by_id(mid, cid)
+
         async def _reply_card(mid, card):
             return await srv.reply_card(mid, card)
+
         async def _cardkit_stream_element(cid, eid, content, *, sequence=0):
-            return await srv.cardkit_stream_element(cid, eid, content, sequence=sequence)
+            return await srv.cardkit_stream_element(
+                cid, eid, content, sequence=sequence
+            )
+
         async def _cardkit_batch_update(cid, actions, *, sequence=0):
             return await srv.cardkit_batch_update(cid, actions, sequence=sequence)
+
         async def _cardkit_close_streaming(cid, *, sequence=0, summary=""):
-            return await srv.cardkit_close_streaming(cid, sequence=sequence, summary=summary)
+            return await srv.cardkit_close_streaming(
+                cid, sequence=sequence, summary=summary
+            )
+
         async def _cardkit_update_summary(cid, summary, *, sequence=0):
             return await srv.cardkit_update_summary(cid, summary, sequence=sequence)
+
         async def _cardkit_update(cid, card, *, sequence=0):
             return await srv.cardkit_update(cid, card, sequence=sequence)
+
         async def _update_card(mid, card):
             return await srv.update_card(mid, card)
+
         async def _send_card_to_chat(chat_id, card):
             return await srv.send_card_to_chat(chat_id, card)
+
         async def _reply_text(mid, text):
             return await srv.reply_text(mid, text)
 
@@ -343,6 +359,7 @@ class E2ETestRunner:
         真飞书无法回查卡片内容，只能靠捕获"我们发了什么"来验证。
         """
         import copy
+
         orig_create = client.cardkit_create
         orig_update = client.cardkit_update
 
@@ -385,7 +402,9 @@ class E2ETestRunner:
         if not cards:
             return []
         # 统计 cardkit_update 调用次数
-        update_calls = [c for c in self.mock_server.call_log if c["op"] == "cardkit_update"]
+        update_calls = [
+            c for c in self.mock_server.call_log if c["op"] == "cardkit_update"
+        ]
         if not update_calls:
             return []
         # mock 只保留最终 card_json，无法还原历史；返回最终状态
@@ -421,6 +440,7 @@ class E2ETestRunner:
         if session is None:
             return False
         import time as _time
+
         past = _time.time() - age_seconds
         session.created_at = past
         if hasattr(session, "card_created_at") and session.card_created_at:
@@ -448,11 +468,15 @@ class E2ETestRunner:
             if use_open_id:
                 chat_id = chat_id or os.environ.get("FEISHU_E2E_OPEN_ID", "")
                 if not chat_id:
-                    raise RuntimeError("真飞书模式需要 FEISHU_E2E_OPEN_ID 环境变量（私聊测试）")
+                    raise RuntimeError(
+                        "真飞书模式需要 FEISHU_E2E_OPEN_ID 环境变量（私聊测试）"
+                    )
             else:
                 chat_id = chat_id or os.environ.get("FEISHU_E2E_CHAT_ID", "")
                 if not chat_id:
-                    raise RuntimeError("真飞书模式需要 FEISHU_E2E_CHAT_ID 环境变量（群聊测试）")
+                    raise RuntimeError(
+                        "真飞书模式需要 FEISHU_E2E_CHAT_ID 环境变量（群聊测试）"
+                    )
             if not self._real_anchor_message_id:
                 raise RuntimeError(
                     "真飞书模式: setup 时未获取到 anchor message_id。"
@@ -477,7 +501,7 @@ class E2ETestRunner:
                 anchor_id = self._real_anchor_message_id
         else:
             if not message_id:
-                message_id = f"om_test_{int(time.time()*1000)}"
+                message_id = f"om_test_{int(time.time() * 1000)}"
             if not chat_id:
                 chat_id = "oc_test_chat" if not use_open_id else "ou_test_user"
             anchor_id = message_id
@@ -592,7 +616,11 @@ class E2ETestRunner:
             if state is None:
                 state = MockCardState(card_id=session.card_id)
                 self._real_card_states[session.card_id] = state
-            state.streaming_mode = not session._streaming_closed if hasattr(session, "_streaming_closed") else False
+            state.streaming_mode = (
+                not session._streaming_closed
+                if hasattr(session, "_streaming_closed")
+                else False
+            )
             return state
         else:
             return self.mock_server.get_card(session.card_id)
@@ -618,6 +646,7 @@ class E2ETestRunner:
             if card is None:
                 return ""
             from hermes_lark_streaming.cardkit.elements import ANSWER_ELEMENT_ID
+
             answer_el = card.elements.get(ANSWER_ELEMENT_ID, {})
             return answer_el.get("content", "")
 
@@ -638,6 +667,7 @@ class E2ETestRunner:
         if card is None:
             return []
         from hermes_lark_streaming.cardkit.elements import UNIFIED_PANEL_ELEMENT_ID
+
         panel = card.elements.get(UNIFIED_PANEL_ELEMENT_ID, {})
         return panel.get("elements", [])
 
@@ -661,8 +691,9 @@ class E2ETestRunner:
         """Assert that a card was created for this session."""
         assert session.card_id is not None, "Card was not created"
         if not self._use_real_feishu:
-            assert self.mock_server.get_card(session.card_id) is not None, \
+            assert self.mock_server.get_card(session.card_id) is not None, (
                 "Card not found in mock server"
+            )
 
     async def assert_card_sealed(self, session: Any) -> None:
         """Assert that the card was sealed (streaming closed).
@@ -678,13 +709,15 @@ class E2ETestRunner:
                 if hasattr(session, "is_terminal_phase") and session.is_terminal_phase:
                     return
                 await asyncio.sleep(0.5)
-            assert hasattr(session, "_streaming_closed") and session._streaming_closed, \
-                f"Card {session.card_id} was not sealed after {max_wait}s wait"
+            assert (
+                hasattr(session, "_streaming_closed") and session._streaming_closed
+            ), f"Card {session.card_id} was not sealed after {max_wait}s wait"
         else:
             card = self.get_card(session)
             assert card is not None, "Card not found"
-            assert not card.streaming_mode, \
+            assert not card.streaming_mode, (
                 f"Card {session.card_id} was not sealed (streaming_mode still True)"
+            )
 
     def assert_no_errors(self) -> None:
         """Assert no error-level API calls were made."""

@@ -19,6 +19,7 @@ from . import (
 
 # ── GatewayRunner method wrappers ──────────────────────────────────
 
+
 def _wrap_handle_message(orig: Callable) -> Callable:
     """Inject NORMALIZE hook at the top of GatewayRunner._handle_message."""
 
@@ -47,10 +48,13 @@ def _wrap_handle_message(orig: Callable) -> Callable:
                     try:
                         _quick_key = self._session_key_for_source(_source)
                     except Exception:
-                        _logger.debug("HLS: _session_key_for_source failed", exc_info=True)
+                        _logger.debug(
+                            "HLS: _session_key_for_source failed", exc_info=True
+                        )
                     if _quick_key and _quick_key in self._running_agents:
                         # Agent is running — send interrupt hint card
                         from ..aowen import _send_card_async, build_interrupt_hint_card
+
                         _chat_id = getattr(_source, "chat_id", "") if _source else ""
                         if _chat_id:
                             _logger.info(
@@ -58,7 +62,9 @@ def _wrap_handle_message(orig: Callable) -> Callable:
                                 "sending interrupt hint card",
                                 str(_quick_key)[:12],
                             )
-                            _send_card_async(_chat_id, build_interrupt_hint_card(), "interrupt_hint")
+                            _send_card_async(
+                                _chat_id, build_interrupt_hint_card(), "interrupt_hint"
+                            )
                             return ""
         except Exception:
             _logger.debug("HLS: /aowen interrupt hint check failed", exc_info=True)
@@ -66,6 +72,7 @@ def _wrap_handle_message(orig: Callable) -> Callable:
         return await orig(self, event, *args, **kwargs)
 
     return wrapper
+
 
 def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
     """Inject START hook at entry and ABORT/INTERRUPT detection on return."""
@@ -143,6 +150,7 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
                 return None
             try:
                 from ..controller import get_controller
+
                 _ctrl = get_controller()
                 if _ctrl and _ctrl.enabled:
                     _eid = ctx.get("event_message_id", "") if ctx else ""
@@ -151,7 +159,8 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
                         if _sess and _sess.card_msg_id:
                             _logger.info(
                                 "card session exists for msg=%s (state=%s), suppressing gateway reply",
-                                mid[:12], _sess.state,
+                                mid[:12],
+                                _sess.state,
                             )
                             ctx["card_sent"] = True
                             _hls_cleanup_ctx()
@@ -171,11 +180,16 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
                     # it must have an active (non-terminal) card session.
                     try:
                         from ..controller import get_controller
+
                         _ctrl = get_controller()
                         if _ctrl and _ctrl.enabled:
                             for _other_mid in others:
                                 _other_sess = _ctrl._sess_get(_other_mid)
-                                if _other_sess and _other_sess.state not in TERMINAL_PHASES and _other_sess.state != "completing":
+                                if (
+                                    _other_sess
+                                    and _other_sess.state not in TERMINAL_PHASES
+                                    and _other_sess.state != "completing"
+                                ):
                                     _real_interrupt = True
                                     _interrupt_new_mid = _other_mid
                                     break
@@ -212,22 +226,32 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
         elif ctx and ctx.get("card_sent"):
             try:
                 from ..controller import get_controller
+
                 _ctrl = get_controller()
                 if _ctrl and _ctrl.enabled:
                     _eid = ctx.get("event_message_id", "")
                     if _eid:
                         _sess = _ctrl._sess_get(_eid)
-                        if _sess and _sess.state not in TERMINAL_PHASES and _sess.state != "completing":
+                        if (
+                            _sess
+                            and _sess.state not in TERMINAL_PHASES
+                            and _sess.state != "completing"
+                        ):
                             _logger.info(
                                 "card session stuck in non-terminal state for msg=%s "
                                 "(state=%s, card_sent=%s), firing abort",
-                                mid[:12], _sess.state, ctx.get("card_sent"),
+                                mid[:12],
+                                _sess.state,
+                                ctx.get("card_sent"),
                             )
                             try:
                                 from .hooks import on_message_aborted
+
                                 on_message_aborted(message_id=mid)
                             except Exception:
-                                _logger.warning("HLS: suppressed exception", exc_info=True)
+                                _logger.warning(
+                                    "HLS: suppressed exception", exc_info=True
+                                )
             except Exception:
                 _logger.warning("HLS: suppressed exception", exc_info=True)
         # v1.3.4 fix (P1): cleanup on normal exit path (early returns and
@@ -237,6 +261,7 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
         return result
 
     return wrapper
+
 
 def _wrap_run_agent(orig: Callable) -> Callable:
     """Inject COMPLETE hook after agent runs; propagate event_message_id."""
@@ -264,7 +289,9 @@ def _wrap_run_agent(orig: Callable) -> Callable:
             if _interrupt_depth > 0 and ctx.get("event_message_id") != event_message_id:
                 # BUG FIX (v0.15.4): We must keep a reference to the original
                 _original_msg_context_ref = ctx.get("_original_msg_context_ref") or ctx
-                _saved_parent_ctx = dict(ctx)  # Save a copy for restoration after orig()
+                _saved_parent_ctx = dict(
+                    ctx
+                )  # Save a copy for restoration after orig()
                 ctx = {
                     "message_id": event_message_id,
                     "chat_id": ctx.get("chat_id", ""),
@@ -274,7 +301,9 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                     "_msg_start_time": time.monotonic(),
                     "_agent_ref": None,
                     "_interrupt_depth": _interrupt_depth,
-                    "_parent_message_id": ctx.get("message_id"),  # Track parent for cleanup
+                    "_parent_message_id": ctx.get(
+                        "message_id"
+                    ),  # Track parent for cleanup
                     "_original_msg_context_ref": _original_msg_context_ref,  # Propagate ref to original
                 }
                 _msg_ctx.set(ctx)
@@ -286,6 +315,7 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                 _src_thread_id = getattr(source, "thread_id", None)
                 try:
                     from .hooks import on_message_interrupted
+
                     on_message_interrupted(
                         message_id=_saved_parent_ctx.get("message_id", ""),
                         new_message_id=event_message_id,
@@ -299,6 +329,7 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                 # Fire START hook for the new (interrupted-into) message
                 try:
                     from .hooks import on_message_started
+
                     on_message_started(
                         message_id=event_message_id,
                         chat_id=ctx["chat_id"],
@@ -386,11 +417,17 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                 try:
                     from .hooks import on_message_completed
 
-                    _elapsed_child = time.monotonic() - ctx.get("_msg_start_time", time.monotonic())
-                    is_interrupted_child = result.get("interrupted", False) or result.get("partial", False)
+                    _elapsed_child = time.monotonic() - ctx.get(
+                        "_msg_start_time", time.monotonic()
+                    )
+                    is_interrupted_child = result.get(
+                        "interrupted", False
+                    ) or result.get("partial", False)
 
                     _finish_reason_child = result.get("finish_reason", "")
-                    _error_msg_child = result.get("error") or result.get("interrupt_message", "")
+                    _error_msg_child = result.get("error") or result.get(
+                        "interrupt_message", ""
+                    )
                     if _finish_reason_child and _finish_reason_child != "stop":
                         _logger.warning(
                             "hermes-lark-streaming v%s: child non-stop finish_reason=%s model=%s msg=%s",
@@ -409,11 +446,31 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                         )
 
                     _agent_ref_child = ctx.get("_agent_ref")
-                    cache_read_child = getattr(_agent_ref_child, "session_cache_read_tokens", 0) if _agent_ref_child else 0
-                    cache_write_child = getattr(_agent_ref_child, "session_cache_write_tokens", 0) if _agent_ref_child else 0
-                    reasoning_tokens = getattr(_agent_ref_child, "session_reasoning_tokens", 0) if _agent_ref_child else 0
-                    estimated_cost_usd = getattr(_agent_ref_child, "session_estimated_cost_usd", 0) if _agent_ref_child else 0
-                    cost_status = getattr(_agent_ref_child, "session_cost_status", "unknown") if _agent_ref_child else "unknown"
+                    cache_read_child = (
+                        getattr(_agent_ref_child, "session_cache_read_tokens", 0)
+                        if _agent_ref_child
+                        else 0
+                    )
+                    cache_write_child = (
+                        getattr(_agent_ref_child, "session_cache_write_tokens", 0)
+                        if _agent_ref_child
+                        else 0
+                    )
+                    reasoning_tokens = (
+                        getattr(_agent_ref_child, "session_reasoning_tokens", 0)
+                        if _agent_ref_child
+                        else 0
+                    )
+                    estimated_cost_usd = (
+                        getattr(_agent_ref_child, "session_estimated_cost_usd", 0)
+                        if _agent_ref_child
+                        else 0
+                    )
+                    cost_status = (
+                        getattr(_agent_ref_child, "session_cost_status", "unknown")
+                        if _agent_ref_child
+                        else "unknown"
+                    )
 
                     card_sent_child = on_message_completed(
                         message_id=ctx["message_id"],
@@ -432,7 +489,9 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                         },
                         api_calls=result.get("api_calls", 0),
                         history_offset=result.get("history_offset", 0),
-                        compression_exhausted=result.get("compression_exhausted", False),
+                        compression_exhausted=result.get(
+                            "compression_exhausted", False
+                        ),
                         aborted=is_interrupted_child,
                         error_message=_error_msg_child,
                         reasoning_tokens=reasoning_tokens,
@@ -447,15 +506,19 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                             (ctx["message_id"] or "?")[:12],
                         )
                 except Exception:
-                    _logger.debug("run_agent: child COMPLETE hook failed", exc_info=True)
+                    _logger.debug(
+                        "run_agent: child COMPLETE hook failed", exc_info=True
+                    )
 
             try:
                 # Step 2: Fire A's (parent) ABORTED COMPLETE
                 from .hooks import on_message_completed
+
                 on_message_completed(
                     message_id=_saved_parent_ctx["message_id"],
                     answer="",
-                    duration=time.monotonic() - _saved_parent_ctx.get("_msg_start_time", time.monotonic()),
+                    duration=time.monotonic()
+                    - _saved_parent_ctx.get("_msg_start_time", time.monotonic()),
                     aborted=True,
                     error_message="Interrupted by new message",
                 )
@@ -467,14 +530,20 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                 if isinstance(result, dict):
                     result["already_sent"] = True
             except Exception:
-                _logger.debug("run_agent: parent ABORTED completion failed", exc_info=True)
+                _logger.debug(
+                    "run_agent: parent ABORTED completion failed", exc_info=True
+                )
         elif ctx is not None:
             try:
                 from .hooks import on_message_completed
 
-                _elapsed = time.monotonic() - ctx.get("_msg_start_time", time.monotonic())
+                _elapsed = time.monotonic() - ctx.get(
+                    "_msg_start_time", time.monotonic()
+                )
 
-                is_interrupted = result.get("interrupted", False) or result.get("partial", False)
+                is_interrupted = result.get("interrupted", False) or result.get(
+                    "partial", False
+                )
 
                 _finish_reason = result.get("finish_reason", "")
                 _error_msg = result.get("error") or result.get("interrupt_message", "")
@@ -496,11 +565,31 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                     )
 
                 _agent_ref = ctx.get("_agent_ref")
-                cache_read = getattr(_agent_ref, "session_cache_read_tokens", 0) if _agent_ref else 0
-                cache_write = getattr(_agent_ref, "session_cache_write_tokens", 0) if _agent_ref else 0
-                reasoning_tokens = getattr(_agent_ref, "session_reasoning_tokens", 0) if _agent_ref else 0
-                estimated_cost_usd = getattr(_agent_ref, "session_estimated_cost_usd", 0) if _agent_ref else 0
-                cost_status = getattr(_agent_ref, "session_cost_status", "unknown") if _agent_ref else "unknown"
+                cache_read = (
+                    getattr(_agent_ref, "session_cache_read_tokens", 0)
+                    if _agent_ref
+                    else 0
+                )
+                cache_write = (
+                    getattr(_agent_ref, "session_cache_write_tokens", 0)
+                    if _agent_ref
+                    else 0
+                )
+                reasoning_tokens = (
+                    getattr(_agent_ref, "session_reasoning_tokens", 0)
+                    if _agent_ref
+                    else 0
+                )
+                estimated_cost_usd = (
+                    getattr(_agent_ref, "session_estimated_cost_usd", 0)
+                    if _agent_ref
+                    else 0
+                )
+                cost_status = (
+                    getattr(_agent_ref, "session_cost_status", "unknown")
+                    if _agent_ref
+                    else "unknown"
+                )
 
                 card_sent = on_message_completed(
                     message_id=ctx["message_id"],
@@ -540,6 +629,7 @@ def _wrap_run_agent(orig: Callable) -> Callable:
 
     return wrapper
 
+
 def _wrap_run_conversation(orig: Callable) -> Callable:
     """Wrap all 6 streaming callbacks right before run_conversation executes."""
     # Lazy import to avoid circular dependency at module load time
@@ -547,6 +637,7 @@ def _wrap_run_conversation(orig: Callable) -> Callable:
     import inspect
 
     from .callbacks import _maybe_wrap_callbacks
+
     try:
         _has_persist_ts = "persist_user_timestamp" in inspect.signature(orig).parameters
     except (ValueError, TypeError):
@@ -586,7 +677,9 @@ def _wrap_run_conversation(orig: Callable) -> Callable:
 
     return wrapper
 
+
 # ── Background task wrapper ───────────────────────────────────────
+
 
 def _wrap_run_background_task(orig: Callable) -> Callable:
     """Inject START/COMPLETE hooks for ``/background`` tasks so they get streaming cards."""
@@ -597,8 +690,12 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
         platform_name = getattr(getattr(source, "platform", None), "value", "").lower()
         if platform_name not in ("feishu", "lark"):
             return await orig(
-                self, prompt, source, task_id,
-                event_message_id=event_message_id, **kwargs,
+                self,
+                prompt,
+                source,
+                task_id,
+                event_message_id=event_message_id,
+                **kwargs,
             )
 
         chat_id = getattr(source, "chat_id", "")
@@ -613,20 +710,23 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
         _bg_thread_id = getattr(source, "thread_id", None)
 
         # Set up message context so _maybe_wrap_callbacks works
-        _msg_ctx.set({
-            "message_id": task_id,
-            "chat_id": chat_id,
-            "anchor_id": _bg_anchor,
-            "event_message_id": task_id,  # Use task_id so callbacks find a valid eid
-            "card_sent": False,
-            "_msg_start_time": time.monotonic(),
-            "_agent_ref": None,  # Will be filled by _maybe_wrap_callbacks
-        })
+        _msg_ctx.set(
+            {
+                "message_id": task_id,
+                "chat_id": chat_id,
+                "anchor_id": _bg_anchor,
+                "event_message_id": task_id,  # Use task_id so callbacks find a valid eid
+                "card_sent": False,
+                "_msg_start_time": time.monotonic(),
+                "_agent_ref": None,  # Will be filled by _maybe_wrap_callbacks
+            }
+        )
         _thread_local_ctx.data = dict(_msg_ctx.get())
 
         # ── Fire START hook ──
         try:
             from .hooks import on_message_started
+
             on_message_started(
                 message_id=task_id,
                 chat_id=chat_id,
@@ -654,6 +754,7 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
                 if ctx and ctx.get("card_sent"):
                     try:
                         from gateway.platforms.base import SendResult
+
                         return SendResult(success=True)
                     except (ImportError, AttributeError):
                         return None
@@ -661,13 +762,17 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
 
             adapter.send = _intercepting_send
             # run concurrently on the same adapter, the first to finish must
-            adapter._hls_bg_sending = getattr(adapter, '_hls_bg_sending', 0) + 1
+            adapter._hls_bg_sending = getattr(adapter, "_hls_bg_sending", 0) + 1
 
         # v1.3.4 fix (P1): orig() + COMPLETE hook 都在 try 块内，finally
         try:
             result = await orig(
-                self, prompt, source, task_id,
-                event_message_id=event_message_id, **kwargs,
+                self,
+                prompt,
+                source,
+                task_id,
+                event_message_id=event_message_id,
+                **kwargs,
             )
 
             # ── Fire COMPLETE hook ──
@@ -676,15 +781,37 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
                 try:
                     from .hooks import on_message_completed
 
-                    _elapsed = time.monotonic() - ctx.get("_msg_start_time", time.monotonic())
+                    _elapsed = time.monotonic() - ctx.get(
+                        "_msg_start_time", time.monotonic()
+                    )
 
                     # Extract cache tokens from agent reference (set by _maybe_wrap_callbacks)
                     _agent_ref = ctx.get("_agent_ref")
-                    cache_read = getattr(_agent_ref, "session_cache_read_tokens", 0) if _agent_ref else 0
-                    cache_write = getattr(_agent_ref, "session_cache_write_tokens", 0) if _agent_ref else 0
-                    reasoning_tokens = getattr(_agent_ref, "session_reasoning_tokens", 0) if _agent_ref else 0
-                    estimated_cost_usd = getattr(_agent_ref, "session_estimated_cost_usd", 0) if _agent_ref else 0
-                    cost_status = getattr(_agent_ref, "session_cost_status", "unknown") if _agent_ref else "unknown"
+                    cache_read = (
+                        getattr(_agent_ref, "session_cache_read_tokens", 0)
+                        if _agent_ref
+                        else 0
+                    )
+                    cache_write = (
+                        getattr(_agent_ref, "session_cache_write_tokens", 0)
+                        if _agent_ref
+                        else 0
+                    )
+                    reasoning_tokens = (
+                        getattr(_agent_ref, "session_reasoning_tokens", 0)
+                        if _agent_ref
+                        else 0
+                    )
+                    estimated_cost_usd = (
+                        getattr(_agent_ref, "session_estimated_cost_usd", 0)
+                        if _agent_ref
+                        else 0
+                    )
+                    cost_status = (
+                        getattr(_agent_ref, "session_cost_status", "unknown")
+                        if _agent_ref
+                        else "unknown"
+                    )
 
                     card_sent = on_message_completed(
                         message_id=task_id,
@@ -703,7 +830,9 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
                         },
                         api_calls=(result or {}).get("api_calls", 0),
                         history_offset=(result or {}).get("history_offset", 0),
-                        compression_exhausted=(result or {}).get("compression_exhausted", False),
+                        compression_exhausted=(result or {}).get(
+                            "compression_exhausted", False
+                        ),
                         aborted=False,
                         error_message=(result or {}).get("error") or "",
                         reasoning_tokens=reasoning_tokens,
@@ -731,14 +860,16 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
                     adapter.send = original_send
                 # v1.3.2 fix (B3-06): default to 0 (not 1) for consistency —
                 # a counter should never default to 1 when decrementing.
-                adapter._hls_bg_sending = getattr(adapter, '_hls_bg_sending', 0) - 1
+                adapter._hls_bg_sending = getattr(adapter, "_hls_bg_sending", 0) - 1
             # v1.3.4 fix (P1): clear context in finally — runs on ALL paths
             _msg_ctx.set(None)
             _thread_local_ctx.data = None
 
     return wrapper
 
+
 # ── Cron delivery wrapper ──────────────────────────────────────────
+
 
 def _wrap_cron_deliver(orig: Callable) -> Callable:
     """Intercept cron ``_deliver_result`` and redirect Feishu deliveries to CardKit cards."""
@@ -806,6 +937,7 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
             """Redirect Feishu adapter.send to CardKit card delivery."""
             try:
                 from ..controller import get_controller
+
                 ctrl = get_controller()
                 _logger.debug(
                     "cron _card_sending_send: ctrl.enabled=%s chat=%s content_len=%d",
@@ -843,7 +975,9 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
 
         feishu_adapter.send = _card_sending_send
         # Use counter instead of boolean flag — same rationale as _hls_bg_sending.
-        feishu_adapter._hls_cron_sending = getattr(feishu_adapter, '_hls_cron_sending', 0) + 1
+        feishu_adapter._hls_cron_sending = (
+            getattr(feishu_adapter, "_hls_cron_sending", 0) + 1
+        )
         try:
             return orig(job, content, adapters=adapters, loop=loop, **kwargs)
         finally:
@@ -853,6 +987,8 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
             if getattr(feishu_adapter, "send", None) is _card_sending_send:
                 feishu_adapter.send = original_send
             # v1.3.2 fix (B3-06): default to 0 (not 1) for consistency.
-            feishu_adapter._hls_cron_sending = getattr(feishu_adapter, '_hls_cron_sending', 0) - 1
+            feishu_adapter._hls_cron_sending = (
+                getattr(feishu_adapter, "_hls_cron_sending", 0) - 1
+            )
 
     return wrapper

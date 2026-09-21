@@ -41,9 +41,13 @@ class TestCoreFlow:
     @pytest.mark.parametrize("use_open_id", _CHAT_MODES)
     async def test_reasoning_and_tools(self, runner, use_open_id):
         """推理 + 工具：AI 回复含推理过程和工具调用."""
-        session = await runner.start_message("search and explain", use_open_id=use_open_id)
+        session = await runner.start_message(
+            "search and explain", use_open_id=use_open_id
+        )
         await runner.feed_reasoning(session, "Let me search for that.")
-        await runner.feed_tool_update(session, tool_name="web_search", status="success", detail="query=test")
+        await runner.feed_tool_update(
+            session, tool_name="web_search", status="success", detail="query=test"
+        )
         await runner.feed_answer(session, "Here is the result.")
         await runner.complete(session, answer="Here is the result.")
 
@@ -57,9 +61,15 @@ class TestCoreFlow:
     async def test_multiple_answer_deltas(self, runner, use_open_id):
         """多段答案拼接：多个 delta 应拼接成完整答案."""
         session = await runner.start_message("tell me a story", use_open_id=use_open_id)
-        for chunk in ["Once upon a time, ", "there was a plugin ", "that rendered cards."]:
+        for chunk in [
+            "Once upon a time, ",
+            "there was a plugin ",
+            "that rendered cards.",
+        ]:
             await runner.feed_answer(session, chunk)
-        await runner.complete(session, answer="Once upon a time, there was a plugin that rendered cards.")
+        await runner.complete(
+            session, answer="Once upon a time, there was a plugin that rendered cards."
+        )
 
         runner.assert_card_created(session)
         await runner.assert_card_sealed(session)
@@ -134,7 +144,9 @@ class TestSessionManagement:
         assert runner.simulate_session_age(session.message_id, 700) is True
         session2 = await runner.start_message("new message after TTL")
 
-        assert session.message_id in runner.controller._sessions, "活跃 session 不应被清理"
+        assert session.message_id in runner.controller._sessions, (
+            "活跃 session 不应被清理"
+        )
         assert session2.message_id in runner.controller._sessions, "新 session 应存在"
 
     @pytest.mark.asyncio
@@ -145,17 +157,24 @@ class TestSessionManagement:
         await runner.complete(session, answer="done")
 
         from hermes_lark_streaming.state.phase import CardPhase
+
         for _ in range(20):
-            if runner.controller._sessions[session.message_id].state == CardPhase.COMPLETED:
+            if (
+                runner.controller._sessions[session.message_id].state
+                == CardPhase.COMPLETED
+            ):
                 break
             await asyncio.sleep(0.5)
-        assert runner.controller._sessions[session.message_id].state == CardPhase.COMPLETED, \
-            "session 应为 COMPLETED 状态"
+        assert (
+            runner.controller._sessions[session.message_id].state == CardPhase.COMPLETED
+        ), "session 应为 COMPLETED 状态"
 
         assert runner.simulate_session_age(session.message_id, 700) is True
         session2 = await runner.start_message("new message")
 
-        assert session.message_id not in runner.controller._sessions, "终态 session 超时应被清理"
+        assert session.message_id not in runner.controller._sessions, (
+            "终态 session 超时应被清理"
+        )
         assert session2.message_id in runner.controller._sessions, "新 session 应存在"
 
     @pytest.mark.asyncio
@@ -167,12 +186,16 @@ class TestSessionManagement:
 
         if runner.is_real_mode:
             for _ in range(20):
-                if runner.controller._sessions[session.message_id].unified_state is None:
+                if (
+                    runner.controller._sessions[session.message_id].unified_state
+                    is None
+                ):
                     break
                 await asyncio.sleep(0.5)
 
-        assert runner.controller._sessions[session.message_id].unified_state is None, \
+        assert runner.controller._sessions[session.message_id].unified_state is None, (
             "封卡后 unified_state 应被释放"
+        )
 
 
 class TestCardLifecycle:
@@ -183,7 +206,9 @@ class TestCardLifecycle:
         """错误恢复：AI 报错 → 卡片仍能封卡."""
         session = await runner.start_message("trigger error")
         await runner.feed_answer(session, "partial")
-        await runner.complete(session, answer="partial", error_message="AI encountered an error")
+        await runner.complete(
+            session, answer="partial", error_message="AI encountered an error"
+        )
 
         runner.assert_card_created(session)
         await runner.assert_card_sealed(session)
@@ -209,8 +234,9 @@ class TestCardLifecycle:
         else:
             await asyncio.sleep(1.0)
 
-        assert session1.state in ("aborted", "terminated", "completed"), \
+        assert session1.state in ("aborted", "terminated", "completed"), (
             f"旧 session 应为终态，实际: {session1.state}"
+        )
 
     @pytest.mark.asyncio
     async def test_long_answer(self, runner):

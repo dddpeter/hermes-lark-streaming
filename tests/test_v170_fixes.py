@@ -53,6 +53,7 @@ def _make_session(message_id: str = "msg", chat_id: str = "chat") -> CardSession
 # P1 RELAY — RelayAdapter wrappers
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestRelayWrappers:
     """v1.7.0 P1: relay-fronted deployments route Feishu sends through
     RelayAdapter.send / send_for_platform — both now dispatch through the
@@ -61,15 +62,25 @@ class TestRelayWrappers:
     def _make_relay_cls(self):
         class _RelayAdapter:
             def __init__(self):
-                self._platform_by_chat = {"chat_feishu": "feishu", "chat_slack": "slack"}
+                self._platform_by_chat = {
+                    "chat_feishu": "feishu",
+                    "chat_slack": "slack",
+                }
                 self.calls = []
 
             async def send(self, chat_id, content, reply_to=None, metadata=None, **kw):
                 self.calls.append(("send", chat_id, content))
                 return SimpleNamespace(success=True)
 
-            async def send_for_platform(self, logical_platform, chat_id, content,
-                                        reply_to=None, metadata=None, **kw):
+            async def send_for_platform(
+                self,
+                logical_platform,
+                chat_id,
+                content,
+                reply_to=None,
+                metadata=None,
+                **kw,
+            ):
                 self.calls.append(("sfp", str(logical_platform), chat_id, content))
                 return SimpleNamespace(success=True)
 
@@ -90,9 +101,13 @@ class TestRelayWrappers:
         ctrl = _make_ctrl()
         ctrl._do_cron_deliver = AsyncMock(return_value=None)
 
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+        ):
             await relay.send_for_platform(
-                "feishu", "chat_x", "Cronjob Response: hi",
+                "feishu",
+                "chat_x",
+                "Cronjob Response: hi",
                 metadata={"job_id": "job-123"},
             )
 
@@ -107,13 +122,20 @@ class TestRelayWrappers:
         )
 
         cls = self._make_relay_cls()
-        cls.send_for_platform = _wrap_relay_adapter_send_for_platform(cls.send_for_platform)
+        cls.send_for_platform = _wrap_relay_adapter_send_for_platform(
+            cls.send_for_platform
+        )
         relay = cls()
 
         ctrl = _make_ctrl()
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+        ):
             await relay.send_for_platform(
-                "slack", "chat_slack", "hello", metadata={"job_id": "j1"},
+                "slack",
+                "chat_slack",
+                "hello",
+                metadata={"job_id": "j1"},
             )
 
         assert relay.calls == [("sfp", "slack", "chat_slack", "hello")]
@@ -130,7 +152,9 @@ class TestRelayWrappers:
         ctrl = _make_ctrl()
         ctrl._do_gateway_deliver = AsyncMock(return_value=("card_msg_1", None))
 
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+        ):
             await relay.send("chat_feishu", "Session compressed")
 
         ctrl._do_gateway_deliver.assert_awaited_once()
@@ -146,7 +170,9 @@ class TestRelayWrappers:
         relay = cls()
 
         ctrl = _make_ctrl()
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+        ):
             await relay.send("chat_unknown", "hello")
 
         assert relay.calls == [("send", "chat_unknown", "hello")]
@@ -161,9 +187,13 @@ class TestRelayWrappers:
         relay = cls()
 
         ctrl = _make_ctrl()
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+        ):
             await relay.send(
-                "chat_feishu", "tail flush", metadata={"_interim_send": True},
+                "chat_feishu",
+                "tail flush",
+                metadata={"_interim_send": True},
             )
 
         assert relay.calls == [("send", "chat_feishu", "tail flush")]
@@ -180,9 +210,12 @@ class TestRelayWrappers:
         ctrl = _make_ctrl()
         ctrl._do_gateway_deliver = AsyncMock(return_value=("card_msg_2", None))
 
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+        ):
             await relay.send(
-                "chat_new", "gateway msg",
+                "chat_new",
+                "gateway msg",
                 metadata={"_relay_logical_platform": "feishu"},
             )
 
@@ -197,15 +230,22 @@ class TestRelayWrappers:
         )
 
         cls = self._make_relay_cls()
-        cls.send_for_platform = _wrap_relay_adapter_send_for_platform(cls.send_for_platform)
+        cls.send_for_platform = _wrap_relay_adapter_send_for_platform(
+            cls.send_for_platform
+        )
         relay = cls()
 
         ctrl = _make_ctrl()
         ctrl._do_cron_deliver = AsyncMock(side_effect=RuntimeError("boom"))
 
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+        ):
             await relay.send_for_platform(
-                "feishu", "chat_x", "cron text", metadata={"job_id": "j1"},
+                "feishu",
+                "chat_x",
+                "cron text",
+                metadata={"job_id": "j1"},
             )
 
         # fell through to the original send_for_platform
@@ -234,6 +274,7 @@ class TestApplyRelayAdapterPatches:
 
     def test_none_class(self):
         from hermes_lark_streaming.patching import _apply_relay_adapter_patches
+
         assert _apply_relay_adapter_patches(None) is False
 
     def test_create_adapter_hook_patches_relay(self):
@@ -271,11 +312,16 @@ class TestApplyRelayAdapterPatches:
 
         async def _send(self, *a, **kw): ...
         async def _sfp(self, *a, **kw): ...
-        RelayAdapter = type("RelayAdapter", (), {
-            "__module__": "gateway.relay.adapter",
-            "send": _send,
-            "send_for_platform": _sfp,
-        })
+
+        RelayAdapter = type(
+            "RelayAdapter",
+            (),
+            {
+                "__module__": "gateway.relay.adapter",
+                "send": _send,
+                "send_for_platform": _sfp,
+            },
+        )
 
         def orig_create_adapter(name, config):
             return RelayAdapter()
@@ -288,6 +334,7 @@ class TestApplyRelayAdapterPatches:
 # ══════════════════════════════════════════════════════════════════════
 # R3-01 — terminal metadata on COMPLETED / ABORTED
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestTerminalMetadata:
     def test_on_aborted_records_reason_and_bumps_epoch(self):
@@ -310,7 +357,10 @@ class TestTerminalMetadata:
         old.state = STREAMING
         ctrl._sess_put("old", old)
 
-        with patch.object(ctrl, "_complete_session"), patch.object(ctrl, "_fire_and_forget"):
+        with (
+            patch.object(ctrl, "_complete_session"),
+            patch.object(ctrl, "_fire_and_forget"),
+        ):
             ctrl.on_interrupted(old_message_id="old", new_message_id="new", chat_id="c")
 
         assert old.state == ABORTED
@@ -329,10 +379,13 @@ class TestTerminalMetadata:
         session.card_id = "card_x"
         ctrl._sess_put("m2", session)
 
-        with patch.object(
-            UnifiedControllerMixin, "_preservative_seal", new=AsyncMock(return_value=True)
-        ), patch.object(
-            StreamCardController, "_send_text_fallback", new=AsyncMock()
+        with (
+            patch.object(
+                UnifiedControllerMixin,
+                "_preservative_seal",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(StreamCardController, "_send_text_fallback", new=AsyncMock()),
         ):
             ok = asyncio.get_event_loop().run_until_complete(
                 ctrl._do_linear_complete(session)
@@ -347,6 +400,7 @@ class TestTerminalMetadata:
 # ══════════════════════════════════════════════════════════════════════
 # R3-02 — _wait_and_abort skips terminal sessions
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestWaitAndAbortTerminalGuard:
     @pytest.mark.asyncio
@@ -381,6 +435,7 @@ class TestWaitAndAbortTerminalGuard:
 # R3-03 — late on_completed after /stop is swallowed
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestOnCompletedAbortedSwallow:
     def test_late_completion_after_abort_returns_true(self):
         """A late on_completed for an ABORTED session returns True (swallowed)
@@ -407,6 +462,7 @@ class TestOnCompletedAbortedSwallow:
 # ══════════════════════════════════════════════════════════════════════
 # R3-04 + R3-08 — reactivation epoch bump + success-gated count
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestReactivationFixes:
     def test_reactivation_bumps_epoch_and_counts_after_success(self):
@@ -466,6 +522,7 @@ class TestReactivationFixes:
 # R3-05 — confirm failure keeps retry data
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestConfirmCardCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_only_after_successful_update(self):
@@ -483,7 +540,9 @@ class TestConfirmCardCleanup:
         ctrl._client = MagicMock()
         ctrl._client.update_card = AsyncMock(side_effect=RuntimeError("network down"))
 
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+        ):
             await padapter._schedule_confirm_card(cid=cid)
 
         # FAILURE → selection KEPT so the retry button still works
@@ -511,7 +570,9 @@ class TestConfirmCardCleanup:
         ctrl._client = MagicMock()
         ctrl._client.update_card = AsyncMock(return_value=None)
 
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+        ):
             await padapter._schedule_confirm_card(cid=cid)
 
         # SUCCESS → everything cleaned
@@ -523,6 +584,7 @@ class TestConfirmCardCleanup:
 # ══════════════════════════════════════════════════════════════════════
 # R3-06 — clarify authorization is fail-closed
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestClarifyAuthzFailClosed:
     def _make_data(self):
@@ -540,11 +602,21 @@ class TestClarifyAuthzFailClosed:
 
         adapter = SimpleNamespace()  # NO authz method
         data = self._make_data()
-        with patch("hermes_lark_streaming.patching.adapter._clarify_questions", {"c1": "Q"}), \
-             patch("hermes_lark_streaming.patching.adapter._clarify_choices", {"c1": ["A", "B"]}), \
-             patch("hermes_lark_streaming.patching.adapter._clarify_selections", {}):
+        with (
+            patch(
+                "hermes_lark_streaming.patching.adapter._clarify_questions", {"c1": "Q"}
+            ),
+            patch(
+                "hermes_lark_streaming.patching.adapter._clarify_choices",
+                {"c1": ["A", "B"]},
+            ),
+            patch("hermes_lark_streaming.patching.adapter._clarify_selections", {}),
+        ):
             result = _handle_clarify_card_action(
-                adapter, data, "select", {"clarify_id": "c1"},
+                adapter,
+                data,
+                "select",
+                {"clarify_id": "c1"},
             )
         assert result is None or getattr(result, "card", None) is None
 
@@ -553,11 +625,21 @@ class TestClarifyAuthzFailClosed:
 
         adapter = SimpleNamespace(_is_interactive_operator_authorized=lambda oid: False)
         data = self._make_data()
-        with patch("hermes_lark_streaming.patching.adapter._clarify_questions", {"c1": "Q"}), \
-             patch("hermes_lark_streaming.patching.adapter._clarify_choices", {"c1": ["A", "B"]}), \
-             patch("hermes_lark_streaming.patching.adapter._clarify_selections", {}):
+        with (
+            patch(
+                "hermes_lark_streaming.patching.adapter._clarify_questions", {"c1": "Q"}
+            ),
+            patch(
+                "hermes_lark_streaming.patching.adapter._clarify_choices",
+                {"c1": ["A", "B"]},
+            ),
+            patch("hermes_lark_streaming.patching.adapter._clarify_selections", {}),
+        ):
             result = _handle_clarify_card_action(
-                adapter, data, "select", {"clarify_id": "c1"},
+                adapter,
+                data,
+                "select",
+                {"clarify_id": "c1"},
             )
         assert result is None or getattr(result, "card", None) is None
 
@@ -565,6 +647,7 @@ class TestClarifyAuthzFailClosed:
 # ══════════════════════════════════════════════════════════════════════
 # R3-09 — select value parsing degrades to text lookup
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestSelectValueParsing:
     def _run(self, option_value, choices):
@@ -592,12 +675,24 @@ class TestSelectValueParsing:
         cg_mod.resolve_gateway_clarify = fake_resolve
         tools_mod.clarify_gateway = cg_mod
 
-        with patch("hermes_lark_streaming.patching.adapter._clarify_questions", {"c9": "Q"}), \
-             patch("hermes_lark_streaming.patching.adapter._clarify_choices", {"c9": choices}), \
-             patch("hermes_lark_streaming.patching.adapter._clarify_selections", {}), \
-             patch.dict(_sys.modules, {"tools": tools_mod, "tools.clarify_gateway": cg_mod}):
+        with (
+            patch(
+                "hermes_lark_streaming.patching.adapter._clarify_questions", {"c9": "Q"}
+            ),
+            patch(
+                "hermes_lark_streaming.patching.adapter._clarify_choices",
+                {"c9": choices},
+            ),
+            patch("hermes_lark_streaming.patching.adapter._clarify_selections", {}),
+            patch.dict(
+                _sys.modules, {"tools": tools_mod, "tools.clarify_gateway": cg_mod}
+            ),
+        ):
             _handle_clarify_card_action(
-                adapter, data, "select", {"clarify_id": "c9"},
+                adapter,
+                data,
+                "select",
+                {"clarify_id": "c9"},
             )
         return resolved
 
@@ -620,6 +715,7 @@ class TestSelectValueParsing:
 # Submitted-card response — no more TypeError (choices kwarg)
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestSubmittedCardResponseContract:
     def test_build_clarify_submitted_card_signature(self):
         """The builder accepts exactly (question, selected, clarify_id) — the
@@ -637,6 +733,7 @@ class TestSubmittedCardResponseContract:
 # R2-01 — incremental escape cache
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestEscapeCache:
     def test_cache_matches_full_recompute(self):
         """The cached incremental escape must equal a full recompute for a
@@ -645,16 +742,16 @@ class TestEscapeCache:
 
         state = UnifiedLinearState()
         deltas = [
-            "hello ",           # plain
-            "world *bold*",     # bold pair in one delta
-            " more",            # plain
-            "*",                # lone asterisk start
-            "text",             # pairs with previous lone asterisk!
-            " `code`",          # inline code
+            "hello ",  # plain
+            "world *bold*",  # bold pair in one delta
+            " more",  # plain
+            "*",  # lone asterisk start
+            "text",  # pairs with previous lone asterisk!
+            " `code`",  # inline code
             "```py\nx=1\n```",  # fenced code
-            " tail",            # plain after code
-            "**unterminated",   # unterminated bold
-            " done",            # plain
+            " tail",  # plain after code
+            "**unterminated",  # unterminated bold
+            " done",  # plain
         ]
         for d in deltas:
             state.on_answer_delta(d)
@@ -681,13 +778,17 @@ class TestEscapeCache:
 # R2-02 — storage caps
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestStorageCaps:
     def test_reasoning_rounds_capped(self):
         state = UnifiedLinearState()
         for i in range(60):
             state.on_reasoning_delta(f"round {i}")
             state.on_answer_delta("x")  # finalize round
-        assert len(state.reasoning_rounds) == UnifiedLinearState._MAX_REASONING_ROUNDS_STORED
+        assert (
+            len(state.reasoning_rounds)
+            == UnifiedLinearState._MAX_REASONING_ROUNDS_STORED
+        )
         # latest rounds kept
         assert state.reasoning_rounds[-1].text == "round 59"
 
@@ -701,7 +802,9 @@ class TestStorageCaps:
         n_rounds = len(state.reasoning_rounds)
         for kind, idx in state._panel_events:
             if kind == "reasoning":
-                assert 0 <= idx < n_rounds, f"stale reasoning idx {idx} (rounds={n_rounds})"
+                assert 0 <= idx < n_rounds, (
+                    f"stale reasoning idx {idx} (rounds={n_rounds})"
+                )
 
     def test_panel_events_capped(self):
         state = UnifiedLinearState()
@@ -713,13 +816,17 @@ class TestStorageCaps:
         state = UnifiedLinearState()
         for i in range(UnifiedLinearState._MAX_BG_REVIEW_MESSAGES_STORED + 10):
             state.on_background_review(f"msg {i}")
-        assert len(state.bg_review_messages) <= UnifiedLinearState._MAX_BG_REVIEW_MESSAGES_STORED
+        assert (
+            len(state.bg_review_messages)
+            <= UnifiedLinearState._MAX_BG_REVIEW_MESSAGES_STORED
+        )
         assert state.bg_review_messages[-1] == "msg 29"
 
 
 # ══════════════════════════════════════════════════════════════════════
 # R2-03 — record_end fallback respects the cap
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestToolStepCap:
     def test_record_end_fallback_respects_cap(self):
@@ -739,6 +846,7 @@ class TestToolStepCap:
 # R1-06 — GC-safe patch dedupe (sentinel attr)
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestSentinelPatchDedupe:
     def test_sentinel_attr_set_on_patch(self):
         from hermes_lark_streaming.patching import (
@@ -751,12 +859,16 @@ class TestSentinelPatchDedupe:
         async def _clarify(self, *a, **kw): ...
         async def _card_action(self, data): ...
 
-        FeishuAdapter = type("FeishuAdapter", (), {
-            "send": _send,
-            "edit_message": _edit,
-            "send_clarify": _clarify,
-            "_handle_card_action_event": _card_action,
-        })
+        FeishuAdapter = type(
+            "FeishuAdapter",
+            (),
+            {
+                "send": _send,
+                "edit_message": _edit,
+                "send_clarify": _clarify,
+                "_handle_card_action_event": _card_action,
+            },
+        )
 
         assert _apply_feishu_adapter_patches(FeishuAdapter) is True
         assert getattr(FeishuAdapter, "_hls_patched", False) is True
@@ -768,6 +880,7 @@ class TestSentinelPatchDedupe:
 # ══════════════════════════════════════════════════════════════════════
 # R1-03 — Phase 2 schema error closes streaming + answer text fallback
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestSchemaErrorRecovery:
     @pytest.mark.asyncio
@@ -800,12 +913,21 @@ class TestSchemaErrorRecovery:
         # Phase 2 add_elements raises schema error
         async def _batch_update_fail(card_id, actions, sequence=0):
             raise FeishuAPIError("unknown property", code=300315)
+
         client.cardkit_batch_update = _batch_update_fail
         client.cardkit_stream_element = AsyncMock()
 
         # Run one unified flush via the mixin method
-        with patch.object(UnifiedControllerMixin, "_preservative_seal", new=AsyncMock(return_value=True)), \
-             patch.object(StreamCardController, "_send_text_fallback", new=AsyncMock()) as fb:
+        with (
+            patch.object(
+                UnifiedControllerMixin,
+                "_preservative_seal",
+                new=AsyncMock(return_value=True),
+            ),
+            patch.object(
+                StreamCardController, "_send_text_fallback", new=AsyncMock()
+            ) as fb,
+        ):
             await ctrl._do_unified_flush(session)
             assert session._streaming_closed is True
             close_mock.assert_awaited_once()
@@ -821,21 +943,29 @@ class TestSchemaErrorRecovery:
 # Collapse hint — bilingual + count summing (R4)
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestCollapseHint:
     def test_is_collapse_hint_child_both_formats(self):
         from hermes_lark_streaming.cardkit.elements import _is_collapse_hint_child
 
         assert _is_collapse_hint_child({"content": "⚡ 还有 3 项已折叠"})
-        assert _is_collapse_hint_child({"content": "⚡ 还有 2 轮早期推理、5 步早期操作已折叠"})
+        assert _is_collapse_hint_child(
+            {"content": "⚡ 还有 2 轮早期推理、5 步早期操作已折叠"}
+        )
         assert _is_collapse_hint_child({"content": "⚡ 7 items collapsed"})
         # reasoning text must NOT match
-        assert not _is_collapse_hint_child({"content": "the bridge collapsed under load and we should think about ⚡ that"})
+        assert not _is_collapse_hint_child(
+            {
+                "content": "the bridge collapsed under load and we should think about ⚡ that"
+            }
+        )
         assert not _is_collapse_hint_child({"content": "⚡ " + "x" * 200})
         assert not _is_collapse_hint_child("not a dict")
 
     def test_digit_sum_counts_both_formats(self):
         """Summing digit groups yields the collapsed total for both spellings."""
         import re
+
         for hint, expected in [
             ("⚡ 还有 3 项已折叠", 3),
             ("⚡ 还有 2 轮早期推理、5 步早期操作已折叠", 7),
@@ -847,9 +977,7 @@ class TestCollapseHint:
         from hermes_lark_streaming.cardkit.elements import build_panel_children
         from hermes_lark_streaming.state.linear import ReasoningRound
 
-        rounds = [
-            ReasoningRound(index=i, text=f"r{i}") for i in range(30)
-        ]
+        rounds = [ReasoningRound(index=i, text=f"r{i}") for i in range(30)]
         for r in rounds:
             r.elapsed_ms = 1.0
         children = build_panel_children(
@@ -868,6 +996,7 @@ class TestCollapseHint:
 # ══════════════════════════════════════════════════════════════════════
 # R2-09 — answer flush interval is configurable
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestAnswerFlushIntervalConfig:
     def test_default_150ms(self):
@@ -890,6 +1019,7 @@ class TestAnswerFlushIntervalConfig:
 # /stop detection — broadened keywords (R3-07)
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestStopResponseDetection:
     @pytest.mark.asyncio
     async def test_hermes_locale_stop_messages_detected(self):
@@ -904,13 +1034,19 @@ class TestStopResponseDetection:
         ctrl._sess_values_snapshot = lambda: [stop_session]
         passthrough = AsyncMock(return_value=SimpleNamespace(success=True))
 
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+        ):
             for msg in (
                 "⚡ 已停止。你可以继续此会话。",
                 "⚡ Stopped. You can continue this session.",
             ):
                 await _dispatch_feishu_outbound(
-                    SimpleNamespace(), "chat", msg, passthrough, metadata=None,
+                    SimpleNamespace(),
+                    "chat",
+                    msg,
+                    passthrough,
+                    metadata=None,
                 )
         # both were suppressed (no passthrough hit)
         passthrough.assert_not_awaited()
@@ -923,9 +1059,15 @@ class TestStopResponseDetection:
         ctrl._do_gateway_deliver = AsyncMock(return_value=("cm", None))
         passthrough = AsyncMock()
 
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+        ):
             await _dispatch_feishu_outbound(
-                SimpleNamespace(), "chat", "Session compressed", passthrough, metadata=None,
+                SimpleNamespace(),
+                "chat",
+                "Session compressed",
+                passthrough,
+                metadata=None,
             )
         ctrl._do_gateway_deliver.assert_awaited_once()
         passthrough.assert_not_awaited()

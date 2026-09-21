@@ -364,7 +364,9 @@ class TestThreadSafeScheduleUpdate:
 
         # The event loop should be woken up and the flush should execute
         await asyncio.sleep(0.3)
-        assert flushed.is_set(), "Flush should have been triggered from worker thread via call_soon_threadsafe"
+        assert flushed.is_set(), (
+            "Flush should have been triggered from worker thread via call_soon_threadsafe"
+        )
         t.join(timeout=1.0)
 
     @pytest.mark.asyncio
@@ -392,7 +394,9 @@ class TestThreadSafeScheduleUpdate:
         # Wait for all threads to fire and at least one flush to complete
         await asyncio.sleep(0.5)
         # At least one flush should have been triggered (throttle may coalesce)
-        assert count >= 1, "At least one flush should have been triggered from worker threads"
+        assert count >= 1, (
+            "At least one flush should have been triggered from worker threads"
+        )
         for t in threads:
             t.join(timeout=1.0)
 
@@ -426,4 +430,6 @@ class TestThreadSafeScheduleUpdate:
         ctrl.schedule_update(do_flush)
         # Should trigger immediately since elapsed > throttle_ms
         await asyncio.sleep(0.3)
-        assert flushed.is_set(), "Flush should have been triggered from event loop thread"
+        assert flushed.is_set(), (
+            "Flush should have been triggered from event loop thread"
+        )

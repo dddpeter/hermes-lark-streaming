@@ -150,9 +150,14 @@ class TestPhaseTransitions:
         assert is_legal_transition("completed", "completed")
 
     def test_terminal_phases_frozenset(self) -> None:
-        assert TERMINAL_PHASES == frozenset({
-            "completed", "creation_failed", "aborted", "terminated",
-        })
+        assert TERMINAL_PHASES == frozenset(
+            {
+                "completed",
+                "creation_failed",
+                "aborted",
+                "terminated",
+            }
+        )
 
     def test_terminal_alias(self) -> None:
         """_TERMINAL is a backward-compatible alias for TERMINAL_PHASES."""
@@ -432,6 +437,7 @@ class TestBackwardCompatibility:
         backward compatibility.
         """
         from hermes_lark_streaming.controller.mixin import CREATION_FAILED
+
         assert CardPhase.FAILED == CREATION_FAILED
         assert CardPhase.FAILED == "creation_failed"
 
@@ -456,6 +462,7 @@ class TestBackwardCompatibility:
         finally:
             loop.close()
         from hermes_lark_streaming.controller.mixin import _TERMINAL
+
         assert s.state not in _TERMINAL
         s.state = "completed"
         assert s.state in _TERMINAL
@@ -472,6 +479,7 @@ class TestBackwardCompatibility:
         been updated to use CREATION_FAILED ("creation_failed").
         """
         from hermes_lark_streaming.controller.mixin import _TERMINAL
+
         assert "failed" not in _TERMINAL
         assert "creation_failed" in _TERMINAL
 
@@ -492,6 +500,7 @@ class TestBackwardCompatibility:
             STREAMING,
             TERMINATED,
         )
+
         assert IDLE == "idle"
         assert CREATING == "creating"
         assert STREAMING == "streaming"
@@ -515,6 +524,7 @@ class TestBackwardCompatibility:
             IDLE,
             TERMINATED,
         )
+
         assert IDLE == "idle"
         assert CREATION_FAILED == "creation_failed"
         assert TERMINATED == "terminated"
@@ -527,5 +537,6 @@ class TestBackwardCompatibility:
             CardPhase,
             TerminalReason,
         )
+
         assert CardPhase.CREATION_FAILED == "creation_failed"
         assert TerminalReason.UNAVAILABLE == "unavailable"

@@ -41,6 +41,7 @@ def _has_real_feishu_creds() -> bool:
 
 # ── Module-level runner — 1 anchor per file, not per test ──
 
+
 @pytest.fixture(scope="module")
 async def _module_runner():
     """v1.3.6: module 级 runner——同一文件所有测试共享 1 个 runner（1 条 anchor）。
@@ -93,6 +94,7 @@ async def _rate_limit_guard():
 
 
 # ── Pytest configuration ──
+
 
 def pytest_configure(config):
     """Register custom markers and log mode."""

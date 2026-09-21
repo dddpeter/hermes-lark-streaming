@@ -19,74 +19,74 @@ except ImportError:  # pragma: no cover — fallback for pytest-only path
 
 __all__ = [
     # Shared state
-    '_thread_local_ctx',
-    '_logger',
-    '_msg_ctx',
-    '_started_msg_ids',
-    '_started_msg_ids_lock',
-    '_gateway_cards',
-    '_gateway_cards_lock',
-    '_gw_runner_patched',
-    '_patch_status',
+    "_thread_local_ctx",
+    "_logger",
+    "_msg_ctx",
+    "_started_msg_ids",
+    "_started_msg_ids_lock",
+    "_gateway_cards",
+    "_gateway_cards_lock",
+    "_gw_runner_patched",
+    "_patch_status",
     # v1.4.0: FeishuAdapter patched-class registry (deferred loading fix)
-    '_patched_feishu_classes',
+    "_patched_feishu_classes",
     # v1.7.0: RelayAdapter patched-class registry (RELAY-fronted deployments)
-    '_apply_relay_adapter_patches',
-    '_wrap_relay_adapter_send',
-    '_wrap_relay_adapter_send_for_platform',
-    '_send_result_ok',
+    "_apply_relay_adapter_patches",
+    "_wrap_relay_adapter_send",
+    "_wrap_relay_adapter_send_for_platform",
+    "_send_result_ok",
     # Functions
-    '_get_config',
-    '_get_event_message_id',
-    '_get_thread_local_ctx',
-    '_apply_gateway_runner_patches',
-    'apply_patches',
-        '_apply_direct_agent_patch',
+    "_get_config",
+    "_get_event_message_id",
+    "_get_thread_local_ctx",
+    "_apply_gateway_runner_patches",
+    "apply_patches",
+    "_apply_direct_agent_patch",
     # FeishuAdapter patch helpers
-    '_apply_feishu_adapter_patches',
-    '_verify_feishu_patch_identity',
+    "_apply_feishu_adapter_patches",
+    "_verify_feishu_patch_identity",
     # v1.6.0: hook platform_registry.create_adapter — main-chain fix for deferred loading
-    '_wrap_platform_registry_create_adapter',
-    '_apply_create_adapter_hook',
+    "_wrap_platform_registry_create_adapter",
+    "_apply_create_adapter_hook",
     # From gateway
-    '_wrap_handle_message',
-    '_wrap_handle_message_with_agent',
-    '_wrap_run_agent',
-    '_wrap_run_background_task',
-    '_wrap_cron_deliver',
-    '_wrap_run_conversation',
+    "_wrap_handle_message",
+    "_wrap_handle_message_with_agent",
+    "_wrap_run_agent",
+    "_wrap_run_background_task",
+    "_wrap_cron_deliver",
+    "_wrap_run_conversation",
     # From callbacks
-    '_maybe_wrap_callbacks',
+    "_maybe_wrap_callbacks",
     # From adapter
-    '_classify_gateway_message',
-    '_wrap_feishu_adapter_send',
-    '_register_gateway_card',
-    '_unregister_gateway_card',
-    '_wrap_feishu_adapter_edit',
-    '_wrap_feishu_adapter_add_reaction',
-    '_wrap_feishu_adapter_delete_reaction',
-    '_wrap_feishu_adapter_send_clarify',
-        '_wrap_handle_card_action_event',
-    '_handle_clarify_card_action',
-    '_REACTION_STATUS_MAP',
-    '_clarify_choices',
-    '_clarify_questions',
-    '_clarify_card_msg_ids',
-    '_clarify_selections',
-    '_clarify_answers',
-    '_clarify_card_info',
+    "_classify_gateway_message",
+    "_wrap_feishu_adapter_send",
+    "_register_gateway_card",
+    "_unregister_gateway_card",
+    "_wrap_feishu_adapter_edit",
+    "_wrap_feishu_adapter_add_reaction",
+    "_wrap_feishu_adapter_delete_reaction",
+    "_wrap_feishu_adapter_send_clarify",
+    "_wrap_handle_card_action_event",
+    "_handle_clarify_card_action",
+    "_REACTION_STATUS_MAP",
+    "_clarify_choices",
+    "_clarify_questions",
+    "_clarify_card_msg_ids",
+    "_clarify_selections",
+    "_clarify_answers",
+    "_clarify_card_info",
     # From hooks
-    'on_feishu_normalize',
-    'on_message_started',
-    'on_message_completed',
-    'on_tool_updated',
-    'on_answer_delta',
-    'on_thinking_delta',
-    'on_reasoning_delta',
-    'on_background_review_message',
-    'on_message_aborted',
-    'on_message_interrupted',
-    '_safe_hook',
+    "on_feishu_normalize",
+    "on_message_started",
+    "on_message_completed",
+    "on_tool_updated",
+    "on_answer_delta",
+    "on_thinking_delta",
+    "on_reasoning_delta",
+    "on_background_review_message",
+    "on_message_aborted",
+    "on_message_interrupted",
+    "_safe_hook",
 ]
 
 # Thread-local storage for context propagation into worker threads
@@ -95,9 +95,12 @@ _thread_local_ctx.data = None
 
 _logger = logging.getLogger("hermes_lark_streaming")
 
+
 def _get_config():
     from ..config import Config
+
     return Config()
+
 
 _msg_ctx: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "hermes_lark_streaming_msg_ctx", default=None
@@ -118,6 +121,7 @@ _patched_feishu_classes: set[int] = set()
 # When both the module-level patch and the direct AIAgent patch are active,
 # The guard prevents the second call from injecting the prefix again.
 
+
 def _get_event_message_id() -> str | None:
     ctx = _msg_ctx.get()
     if ctx is None:
@@ -126,8 +130,10 @@ def _get_event_message_id() -> str | None:
         return None
     return ctx.get("event_message_id")
 
+
 def _get_thread_local_ctx() -> dict | None:
     return getattr(_thread_local_ctx, "data", None)
+
 
 def _send_result_ok(message_id: str | None = None):
     """v1.7.0: Build a success SendResult, import-tolerant for old hermes.
@@ -136,6 +142,7 @@ def _send_result_ok(message_id: str | None = None):
     can import it from the package without circular imports."""
     try:
         from gateway.platforms.base import SendResult
+
         if message_id:
             return SendResult(success=True, message_id=message_id)
         return SendResult(success=True)
@@ -194,6 +201,7 @@ from .hooks import (  # noqa: E402
 
 # ── Public entry point ─────────────────────────────────────────────
 
+
 def _apply_gateway_runner_patches() -> bool:
     """Apply the three critical GatewayRunner method patches."""
     global _gw_runner_patched
@@ -209,33 +217,43 @@ def _apply_gateway_runner_patches() -> bool:
         # Patch each method individually so one missing method
         # doesn't prevent the others from being patched.
         _patched_methods = []
-        if hasattr(GatewayRunner, '_handle_message'):
-            GatewayRunner._handle_message = _wrap_handle_message(GatewayRunner._handle_message)
-            _patched_methods.append('_handle_message')
+        if hasattr(GatewayRunner, "_handle_message"):
+            GatewayRunner._handle_message = _wrap_handle_message(
+                GatewayRunner._handle_message
+            )
+            _patched_methods.append("_handle_message")
         else:
-            _logger.warning("hermes-lark-streaming: GatewayRunner._handle_message not found, skipping patch")
+            _logger.warning(
+                "hermes-lark-streaming: GatewayRunner._handle_message not found, skipping patch"
+            )
 
-        if hasattr(GatewayRunner, '_handle_message_with_agent'):
+        if hasattr(GatewayRunner, "_handle_message_with_agent"):
             GatewayRunner._handle_message_with_agent = _wrap_handle_message_with_agent(
                 GatewayRunner._handle_message_with_agent
             )
-            _patched_methods.append('_handle_message_with_agent')
+            _patched_methods.append("_handle_message_with_agent")
         else:
-            _logger.warning("hermes-lark-streaming: GatewayRunner._handle_message_with_agent not found, skipping patch")
+            _logger.warning(
+                "hermes-lark-streaming: GatewayRunner._handle_message_with_agent not found, skipping patch"
+            )
 
-        if hasattr(GatewayRunner, '_run_agent'):
+        if hasattr(GatewayRunner, "_run_agent"):
             GatewayRunner._run_agent = _wrap_run_agent(GatewayRunner._run_agent)
-            _patched_methods.append('_run_agent')
+            _patched_methods.append("_run_agent")
         else:
-            _logger.warning("hermes-lark-streaming: GatewayRunner._run_agent not found, skipping patch")
+            _logger.warning(
+                "hermes-lark-streaming: GatewayRunner._run_agent not found, skipping patch"
+            )
 
         try:
             GatewayRunner._run_background_task = _wrap_run_background_task(
                 GatewayRunner._run_background_task
             )
-            _patched_methods.append('_run_background_task')
+            _patched_methods.append("_run_background_task")
         except AttributeError:
-            _logger.debug("hermes-lark-streaming: _run_background_task not found, background cards disabled")
+            _logger.debug(
+                "hermes-lark-streaming: _run_background_task not found, background cards disabled"
+            )
 
         if not _patched_methods:
             _logger.error(
@@ -247,16 +265,18 @@ def _apply_gateway_runner_patches() -> bool:
         _gw_runner_patched = True
         _logger.info(
             "hermes-lark-streaming: GatewayRunner patched methods: %s",
-            ', '.join(_patched_methods),
+            ", ".join(_patched_methods),
         )
         return True
     except (ImportError, AttributeError) as e:
         _logger.error(
             "hermes-lark-streaming: GatewayRunner patch FAILED — "
             "gateway.run found but incompatible. "
-            "Streaming cards will NOT work. Error: %s", e,
+            "Streaming cards will NOT work. Error: %s",
+            e,
         )
         return False
+
 
 def apply_patches() -> None:
     """Apply all runtime monkey patches to ``GatewayRunner`` and ``AIAgent``."""
@@ -318,11 +338,14 @@ def apply_patches() -> None:
         try:
             _cl_mod.run_conversation = _wrap_run_conversation(_cl_run_conversation)
             _module_patch_applied = True
-            _logger.info("hermes-lark-streaming: agent.conversation_loop module patched ✓")
+            _logger.info(
+                "hermes-lark-streaming: agent.conversation_loop module patched ✓"
+            )
         except (AttributeError, TypeError) as e:
             _logger.warning(
                 "hermes-lark-streaming: agent.conversation_loop found but "
-                "patch failed (%s). Falling back to direct AIAgent patch.", e,
+                "patch failed (%s). Falling back to direct AIAgent patch.",
+                e,
             )
 
     if not _module_patch_applied:
@@ -353,7 +376,9 @@ def apply_patches() -> None:
     if FeishuAdapter is not None:
         feishu_patched = _apply_feishu_adapter_patches(FeishuAdapter, is_repatch=False)
     else:
-        _logger.info("hermes-lark-streaming: FeishuAdapter not available via HermesCompat, patch skipped")
+        _logger.info(
+            "hermes-lark-streaming: FeishuAdapter not available via HermesCompat, patch skipped"
+        )
 
     # v1.6.0: hook platform_registry.create_adapter — main-chain fix for
     # hermes v0.17.0+ bundled platform deferred loading.  The FeishuAdapter
@@ -379,11 +404,14 @@ def apply_patches() -> None:
     relay_patched = False
     try:
         from gateway.relay.adapter import RelayAdapter as _RelayAdapter
+
         relay_patched = _apply_relay_adapter_patches(_RelayAdapter)
     except ImportError:
         relay_patched = False
     except Exception:
-        _logger.debug("hermes-lark-streaming: direct RelayAdapter patch failed", exc_info=True)
+        _logger.debug(
+            "hermes-lark-streaming: direct RelayAdapter patch failed", exc_info=True
+        )
 
     # ── Summary ──
     # v1.1.0: Record patch status in a structured dict for doctor command
@@ -417,6 +445,7 @@ def apply_patches() -> None:
     # Deferred direct patch: retry AIAgent.run_conversation after Hermes
     # finishes loading all modules (belt-and-suspenders for lazy imports)
 
+
 def _apply_feishu_adapter_patches(FeishuAdapter, *, is_repatch: bool = False) -> bool:
     """Apply all FeishuAdapter method patches to the given class."""
     if FeishuAdapter is None:
@@ -426,7 +455,10 @@ def _apply_feishu_adapter_patches(FeishuAdapter, *, is_repatch: bool = False) ->
     # can be reused after GC (hermes hot module reload), which previously
     # made this id-only set skip a freshly reloaded class. The id set stays
     # as a mirror for compatibility with existing tests / doctor output.
-    if getattr(FeishuAdapter, "_hls_patched", False) or id(FeishuAdapter) in _patched_feishu_classes:
+    if (
+        getattr(FeishuAdapter, "_hls_patched", False)
+        or id(FeishuAdapter) in _patched_feishu_classes
+    ):
         if is_repatch:
             pass
         return True
@@ -434,35 +466,63 @@ def _apply_feishu_adapter_patches(FeishuAdapter, *, is_repatch: bool = False) ->
     try:
         FeishuAdapter.send = _wrap_feishu_adapter_send(FeishuAdapter.send)
         try:
-            FeishuAdapter.edit_message = _wrap_feishu_adapter_edit(FeishuAdapter.edit_message)
+            FeishuAdapter.edit_message = _wrap_feishu_adapter_edit(
+                FeishuAdapter.edit_message
+            )
         except AttributeError:
-            _logger.debug("hermes-lark-streaming: FeishuAdapter.edit_message not found, edit interception skipped")
+            _logger.debug(
+                "hermes-lark-streaming: FeishuAdapter.edit_message not found, edit interception skipped"
+            )
         try:
-            FeishuAdapter.add_reaction = _wrap_feishu_adapter_add_reaction(FeishuAdapter.add_reaction)
+            FeishuAdapter.add_reaction = _wrap_feishu_adapter_add_reaction(
+                FeishuAdapter.add_reaction
+            )
         except AttributeError:
             try:
-                FeishuAdapter._add_reaction = _wrap_feishu_adapter_add_reaction(FeishuAdapter._add_reaction)
+                FeishuAdapter._add_reaction = _wrap_feishu_adapter_add_reaction(
+                    FeishuAdapter._add_reaction
+                )
             except AttributeError:
-                _logger.debug("hermes-lark-streaming: FeishuAdapter.add_reaction/_add_reaction not found, reaction interception skipped")
+                _logger.debug(
+                    "hermes-lark-streaming: FeishuAdapter.add_reaction/_add_reaction not found, reaction interception skipped"
+                )
         try:
-            FeishuAdapter.delete_reaction = _wrap_feishu_adapter_delete_reaction(FeishuAdapter.delete_reaction)
+            FeishuAdapter.delete_reaction = _wrap_feishu_adapter_delete_reaction(
+                FeishuAdapter.delete_reaction
+            )
         except AttributeError:
             try:
-                FeishuAdapter._remove_reaction = _wrap_feishu_adapter_delete_reaction(FeishuAdapter._remove_reaction)
+                FeishuAdapter._remove_reaction = _wrap_feishu_adapter_delete_reaction(
+                    FeishuAdapter._remove_reaction
+                )
             except AttributeError:
-                _logger.debug("hermes-lark-streaming: FeishuAdapter.delete_reaction/_remove_reaction not found, reaction interception skipped")
+                _logger.debug(
+                    "hermes-lark-streaming: FeishuAdapter.delete_reaction/_remove_reaction not found, reaction interception skipped"
+                )
         # NOTE(v0.15.4): send_image_file / send_image interceptors DELETED (2026-06-09).
 
         try:
-            FeishuAdapter.send_clarify = _wrap_feishu_adapter_send_clarify(FeishuAdapter.send_clarify)
-            _logger.info("hermes-lark-streaming: FeishuAdapter.send_clarify patched ✓ (clarify interactive card)")
+            FeishuAdapter.send_clarify = _wrap_feishu_adapter_send_clarify(
+                FeishuAdapter.send_clarify
+            )
+            _logger.info(
+                "hermes-lark-streaming: FeishuAdapter.send_clarify patched ✓ (clarify interactive card)"
+            )
         except AttributeError:
-            _logger.debug("hermes-lark-streaming: FeishuAdapter.send_clarify not found, clarify card skipped")
+            _logger.debug(
+                "hermes-lark-streaming: FeishuAdapter.send_clarify not found, clarify card skipped"
+            )
         try:
-            FeishuAdapter._handle_card_action_event = _wrap_handle_card_action_event(FeishuAdapter._handle_card_action_event)
-            _logger.info("hermes-lark-streaming: FeishuAdapter._handle_card_action_event patched ✓ (card action /card suppression)")
+            FeishuAdapter._handle_card_action_event = _wrap_handle_card_action_event(
+                FeishuAdapter._handle_card_action_event
+            )
+            _logger.info(
+                "hermes-lark-streaming: FeishuAdapter._handle_card_action_event patched ✓ (card action /card suppression)"
+            )
         except AttributeError:
-            _logger.debug("hermes-lark-streaming: FeishuAdapter._handle_card_action_event not found, /card suppression skipped")
+            _logger.debug(
+                "hermes-lark-streaming: FeishuAdapter._handle_card_action_event not found, /card suppression skipped"
+            )
 
         # Record this class as patched AFTER successful patch (only on success,
         # so a failed attempt can be retried later in the deferred stage).
@@ -481,6 +541,7 @@ def _apply_feishu_adapter_patches(FeishuAdapter, *, is_repatch: bool = False) ->
     except AttributeError as e:
         _logger.info("hermes-lark-streaming: FeishuAdapter patch skipped (%s)", e)
         return False
+
 
 def _apply_relay_adapter_patches(RelayAdapter, *, is_repatch: bool = False) -> bool:
     """v1.7.0: Apply RELAY-mode patches to the RelayAdapter class (P1 fix).
@@ -529,6 +590,7 @@ def _apply_relay_adapter_patches(RelayAdapter, *, is_repatch: bool = False) -> b
         _logger.info("hermes-lark-streaming: RelayAdapter patch skipped (%s)", e)
         return False
 
+
 def _verify_feishu_patch_identity(adapter_instance: Any) -> bool:
     """Verify that an adapter instance's class has been patched by HLS."""
     if adapter_instance is None:
@@ -541,7 +603,8 @@ def _verify_feishu_patch_identity(adapter_instance: Any) -> bool:
         "HLS: FeishuAdapter identity mismatch! adapter instance class id=%s "
         "not in patched classes %s. Clarify/delegate cards will fall back to "
         "text. Run /aowen doctor.",
-        id(cls), sorted(_patched_feishu_classes),
+        id(cls),
+        sorted(_patched_feishu_classes),
     )
     return False
 
@@ -571,19 +634,25 @@ def _wrap_platform_registry_create_adapter(orig_create_adapter: Callable) -> Cal
         if _is_feishu:
             cls = type(adapter)
             # v1.7.0 (R1-06): sentinel attr is primary; id set is a mirror.
-            if getattr(cls, "_hls_patched", False) or id(cls) in _patched_feishu_classes:
+            if (
+                getattr(cls, "_hls_patched", False)
+                or id(cls) in _patched_feishu_classes
+            ):
                 return adapter
             try:
                 _apply_feishu_adapter_patches(cls, is_repatch=True)
                 _logger.info(
                     "HLS: FeishuAdapter class patched at create_adapter hook "
                     "(class_id=%s, deferred loading intercepted, name=%s)",
-                    id(cls), name,
+                    id(cls),
+                    name,
                 )
             except Exception as e:
                 _logger.warning(
                     "HLS: create_adapter hook patch failed (class_id=%s name=%s): %s",
-                    id(cls), name, e,
+                    id(cls),
+                    name,
+                    e,
                 )
             return adapter
 
@@ -605,7 +674,8 @@ def _wrap_platform_registry_create_adapter(orig_create_adapter: Callable) -> Cal
             except Exception as e:
                 _logger.warning(
                     "HLS: create_adapter hook relay patch failed (name=%s): %s",
-                    name, e,
+                    name,
+                    e,
                 )
         return adapter
 
@@ -679,11 +749,14 @@ def _apply_create_adapter_hook() -> bool:
     )
     return True
 
+
 def _apply_direct_agent_patch() -> None:
     """Directly patch AIAgent.run_conversation as belt-and-suspenders."""
     AIAgent = HermesCompat().aiagent_class
     if AIAgent is None:
-        _logger.info("hermes-lark-streaming: AIAgent.run_conversation direct patch deferred (run_agent not yet loaded)")
+        _logger.info(
+            "hermes-lark-streaming: AIAgent.run_conversation direct patch deferred (run_agent not yet loaded)"
+        )
         return
 
     try:
@@ -691,13 +764,18 @@ def _apply_direct_agent_patch() -> None:
 
         # Guard: skip if already patched
         if getattr(_orig_method, "_hls_direct_patched", False):
-            _logger.info("hermes-lark-streaming: AIAgent.run_conversation already directly patched, skip")
+            _logger.info(
+                "hermes-lark-streaming: AIAgent.run_conversation already directly patched, skip"
+            )
             return
 
         # v1.3.4 fix (P1): inspect.signature 可能对 C 扩展/wrapped callable 抛异常
         import inspect
+
         try:
-            _has_persist_ts = "persist_user_timestamp" in inspect.signature(_orig_method).parameters
+            _has_persist_ts = (
+                "persist_user_timestamp" in inspect.signature(_orig_method).parameters
+            )
         except (ValueError, TypeError):
             _has_persist_ts = False
 
@@ -739,4 +817,7 @@ def _apply_direct_agent_patch() -> None:
         AIAgent.run_conversation = _patched_run_conversation
         _logger.info("hermes-lark-streaming: AIAgent.run_conversation patched directly")
     except AttributeError as e:
-        _logger.info("hermes-lark-streaming: AIAgent.run_conversation direct patch deferred (run_agent not yet loaded: %s)", e)
+        _logger.info(
+            "hermes-lark-streaming: AIAgent.run_conversation direct patch deferred (run_agent not yet loaded: %s)",
+            e,
+        )

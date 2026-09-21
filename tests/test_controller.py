@@ -60,7 +60,9 @@ def test_on_message_started_registers_anchor_alias_and_cleanup() -> None:
     ctrl = StreamCardController()
     _enable(ctrl)
 
-    with patch.object(ctrl, "_fire_and_forget", side_effect=lambda coro, loop: coro.close()):
+    with patch.object(
+        ctrl, "_fire_and_forget", side_effect=lambda coro, loop: coro.close()
+    ):
         ctrl.on_message_started(message_id="msg", chat_id="chat", anchor_id="quoted")
 
     session = ctrl._sessions["msg"]
@@ -77,7 +79,9 @@ def test_on_interrupted_uses_new_message_id_and_anchor_alias() -> None:
     ctrl = StreamCardController()
     _enable(ctrl)
 
-    with patch.object(ctrl, "_fire_and_forget", side_effect=lambda coro, loop: coro.close()):
+    with patch.object(
+        ctrl, "_fire_and_forget", side_effect=lambda coro, loop: coro.close()
+    ):
         ctrl.on_message_started(message_id="old", chat_id="chat")
         ctrl.on_interrupted(
             old_message_id="old",
@@ -104,7 +108,9 @@ def test_on_interrupted_skips_abort_for_completing_session() -> None:
     ctrl = StreamCardController()
     _enable(ctrl)
 
-    with patch.object(ctrl, "_fire_and_forget", side_effect=lambda coro, loop: coro.close()):
+    with patch.object(
+        ctrl, "_fire_and_forget", side_effect=lambda coro, loop: coro.close()
+    ):
         ctrl.on_message_started(message_id="completing_msg", chat_id="chat")
         # Simulate session in COMPLETING state (on_completed already fired)
         ctrl._sessions["completing_msg"].state = COMPLETING
@@ -183,9 +189,7 @@ def test_on_aborted_normally_aborts_non_completing_session() -> None:
     ctrl.on_aborted(message_id="streaming_msg")
 
     session = ctrl._sessions["streaming_msg"]
-    assert session.state == ABORTED, (
-        "Non-COMPLETING session must be marked as ABORTED"
-    )
+    assert session.state == ABORTED, "Non-COMPLETING session must be marked as ABORTED"
     assert session._was_aborted is True
     assert session.flush._completed, (
         "flush must be marked completed for aborted session"
@@ -240,7 +244,9 @@ async def test_background_review_deferred_until_complete() -> None:
     # In linear mode, defer_background_review pushes the text directly
     # into unified_state and returns True (consumed by card, suppress
     # plain text). The sender callback is never invoked.
-    assert ctrl.defer_background_review(message_id="msg_bg", text="review", sender=sent.append)
+    assert ctrl.defer_background_review(
+        message_id="msg_bg", text="review", sender=sent.append
+    )
     assert sent == []
     assert session.unified_state is not None
     assert session.unified_state.bg_review_messages == ["review"]
@@ -250,7 +256,9 @@ def test_background_review_without_active_session_not_deferred() -> None:
     ctrl = _setup_ctrl()
     sent: list[str] = []
 
-    assert not ctrl.defer_background_review(message_id="missing", text="review", sender=sent.append)
+    assert not ctrl.defer_background_review(
+        message_id="missing", text="review", sender=sent.append
+    )
     assert sent == []
 
 
@@ -262,7 +270,9 @@ def test_background_review_after_flush_not_deferred() -> None:
 
     ctrl._flush_deferred_background_reviews(session)
 
-    assert not ctrl.defer_background_review(message_id="msg_bg", text="review", sender=sent.append)
+    assert not ctrl.defer_background_review(
+        message_id="msg_bg", text="review", sender=sent.append
+    )
     assert sent == []
 
 
@@ -372,13 +382,18 @@ def _capture_split_calls(
 class TestLinearDispatch:
     """验证线性 session 的 6 个入口走 linear 路径，非线性 session 不受影响."""
 
-    @pytest.mark.parametrize("event,kwargs", [
-        ("on_reasoning", {"text": "r"}),
-        ("on_answer", {"text": "a"}),
-    ])
+    @pytest.mark.parametrize(
+        "event,kwargs",
+        [
+            ("on_reasoning", {"text": "r"}),
+            ("on_answer", {"text": "a"}),
+        ],
+    )
     def test_linear_dispatch_creates_state(self, event: str, kwargs: dict) -> None:
         ctrl = _setup_ctrl()
-        ctrl._cfg._reload_cached = lambda: {"display": {"platforms": {"feishu": {"show_reasoning": True}}}}  # type: ignore[assignment]
+        ctrl._cfg._reload_cached = lambda: {
+            "display": {"platforms": {"feishu": {"show_reasoning": True}}}
+        }  # type: ignore[assignment]
         session = _make_session("msg_d", linear=True)
         ctrl._sessions["msg_d"] = session
         getattr(ctrl, event)(message_id="msg_d", **kwargs)
@@ -386,7 +401,9 @@ class TestLinearDispatch:
 
     def test_linear_dispatch_reasoning_sets_dirty(self) -> None:
         ctrl = _setup_ctrl()
-        ctrl._cfg._reload_cached = lambda: {"display": {"platforms": {"feishu": {"show_reasoning": True}}}}  # type: ignore[assignment]
+        ctrl._cfg._reload_cached = lambda: {
+            "display": {"platforms": {"feishu": {"show_reasoning": True}}}
+        }  # type: ignore[assignment]
         session = _make_session("msg_d", linear=True)
         ctrl._sessions["msg_d"] = session
         ctrl.on_reasoning(message_id="msg_d", text="r")
@@ -423,7 +440,9 @@ class TestLinearDispatch:
         session.state = STREAMING
         session.card_id = "card_123"
         ctrl._sessions["msg_c"] = session
-        with patch.object(ctrl, "_do_linear_complete_with_fallback", new_callable=AsyncMock):
+        with patch.object(
+            ctrl, "_do_linear_complete_with_fallback", new_callable=AsyncMock
+        ):
             ctrl.on_completed(message_id="msg_c")
         # After on_completed, state should be COMPLETING (not COMPLETED yet)
         # The actual completion happens asynchronously in _do_linear_complete
@@ -610,7 +629,9 @@ class TestDoUnifiedFlush:
         session.state = STREAMING
         session.card_id = "c"
         session._creation_stages.add("hint_removed")
-        session._creation_stages.add("answer")  # Answer element already exists (Phase 2 done)
+        session._creation_stages.add(
+            "answer"
+        )  # Answer element already exists (Phase 2 done)
         session._creation_stages.add("panel")  # Panel already exists (Phase 2 done)
         session.unified_state.on_reasoning_delta("t")
         session.unified_state.panel_dirty = False
@@ -657,7 +678,9 @@ class TestDoUnifiedFlush:
 
         batch_actions: list[list[dict]] = []
 
-        async def capture_batch(card_id: str, actions: list[dict], **kw: object) -> None:
+        async def capture_batch(
+            card_id: str, actions: list[dict], **kw: object
+        ) -> None:
             batch_actions.append(actions)
 
         ctrl._client.cardkit_batch_update = capture_batch
@@ -669,13 +692,16 @@ class TestDoUnifiedFlush:
         all_actions = batch_actions[0]
         add_actions = [a for a in all_actions if a["action"] == "add_elements"]
         delete_hint_actions = [
-            a for a in all_actions
-            if a["action"] == "delete_elements"
+            a for a in all_actions if a["action"] == "delete_elements"
         ]
-        assert len(add_actions) == 1  # Phase 2: add answer element (panel not needed for answer-only content)
+        assert (
+            len(add_actions) == 1
+        )  # Phase 2: add answer element (panel not needed for answer-only content)
         assert len(delete_hint_actions) == 1  # Delete loading hint
         assert "hint_removed" in session._creation_stages
-        assert "answer" in session._creation_stages  # Answer element created (Path B: answer only)
+        assert (
+            "answer" in session._creation_stages
+        )  # Answer element created (Path B: answer only)
         # panel stage remains absent — no reasoning/tools, so no panel needed
 
     @pytest.mark.asyncio
@@ -692,7 +718,9 @@ class TestDoUnifiedFlush:
 
         batch_actions: list[list[dict]] = []
 
-        async def capture_batch(card_id: str, actions: list[dict], **kw: object) -> None:
+        async def capture_batch(
+            card_id: str, actions: list[dict], **kw: object
+        ) -> None:
             batch_actions.append(actions)
 
         ctrl._client.cardkit_batch_update = capture_batch
@@ -703,8 +731,7 @@ class TestDoUnifiedFlush:
         all_actions = batch_actions[0]
         add_actions = [a for a in all_actions if a["action"] == "add_elements"]
         delete_hint_actions = [
-            a for a in all_actions
-            if a["action"] == "delete_elements"
+            a for a in all_actions if a["action"] == "delete_elements"
         ]
         assert len(add_actions) == 1  # Phase 2: add panel + answer element
         assert len(delete_hint_actions) == 1
@@ -716,7 +743,9 @@ class TestDoUnifiedFlush:
     async def test_api_errors_swallowed(self, code: int) -> None:
         """rate limited / streaming closed 不抛异常."""
         ctrl = _setup_ctrl()
-        ctrl._client.cardkit_batch_update = AsyncMock(side_effect=FeishuAPIError("e", code=code))
+        ctrl._client.cardkit_batch_update = AsyncMock(
+            side_effect=FeishuAPIError("e", code=code)
+        )
         session = _make_session("msg_err", linear=True)
         session.state = STREAMING
         session.card_id = "card_e"
@@ -729,7 +758,9 @@ class TestDoUnifiedFlush:
     async def test_stream_element_feishu_error_does_not_crash(self) -> None:
         """FeishuAPIError from stream_element is caught in unified flush."""
         ctrl = _setup_ctrl()
-        ctrl._client.cardkit_stream_element = AsyncMock(side_effect=FeishuAPIError("stream fail", code=230020))
+        ctrl._client.cardkit_stream_element = AsyncMock(
+            side_effect=FeishuAPIError("stream fail", code=230020)
+        )
         session = _make_session("msg_exc", linear=True)
         session.state = STREAMING
         session.card_id = "card_exc"
@@ -809,7 +840,9 @@ class TestPhase3ElementNotFoundV141:
         )
         # v1.4.1 fix: panel_dirty / tool_steps_dirty PRESERVED for next-flush retry
         # (not cleared like schema_error, not lost like the old generic warning path)
-        assert session.unified_state.panel_dirty or session.unified_state.tool_steps_dirty, (
+        assert (
+            session.unified_state.panel_dirty or session.unified_state.tool_steps_dirty
+        ), (
             "Phase 3 is_element_not_found_error must preserve panel_dirty/tool_steps_dirty "
             "so the partial_update retries on the next flush"
         )
@@ -836,7 +869,9 @@ class TestPhase3ElementNotFoundV141:
 
         call_count = {"batch": 0}
 
-        async def batch_then_ok(card_id: str, actions: list[dict], **kw: object) -> None:
+        async def batch_then_ok(
+            card_id: str, actions: list[dict], **kw: object
+        ) -> None:
             call_count["batch"] += 1
             if call_count["batch"] == 1:
                 # First flush: Phase 3 safety net deletes hint → 300315
@@ -903,7 +938,9 @@ class TestReasoningFinalization:
         ctrl = _setup_ctrl()
         batch_calls: list[list[dict]] = []
 
-        async def capture_batch(card_id: str, actions: list[dict], **kw: object) -> None:
+        async def capture_batch(
+            card_id: str, actions: list[dict], **kw: object
+        ) -> None:
             batch_calls.append(actions)
 
         ctrl._client.cardkit_batch_update = capture_batch
@@ -934,8 +971,12 @@ class TestDoLinearComplete:
         ctrl = _setup_ctrl()
         call_order: list[str] = []
         client = ctrl._client
-        client.cardkit_close_streaming = AsyncMock(side_effect=lambda *a, **k: call_order.append("close"))
-        client.cardkit_update = AsyncMock(side_effect=lambda *a, **k: call_order.append("update"))
+        client.cardkit_close_streaming = AsyncMock(
+            side_effect=lambda *a, **k: call_order.append("close")
+        )
+        client.cardkit_update = AsyncMock(
+            side_effect=lambda *a, **k: call_order.append("update")
+        )
 
         session = _make_session("msg_comp", linear=True)
         session.state = STREAMING
@@ -974,7 +1015,9 @@ class TestDoLinearComplete:
     @pytest.mark.asyncio
     async def test_three_retries_exhausted(self) -> None:
         ctrl = _setup_ctrl()
-        ctrl._client.cardkit_close_streaming = AsyncMock(side_effect=FeishuAPIError("fail", code=99999))
+        ctrl._client.cardkit_close_streaming = AsyncMock(
+            side_effect=FeishuAPIError("fail", code=99999)
+        )
 
         session = _make_session("msg_3fail", linear=True)
         session.state = STREAMING
@@ -995,7 +1038,11 @@ class TestDoLinearComplete:
         time.sleep(0.001)
         # Capture elapsed_ms before complete, since _release_session_data
         # clears unified_state after completion (v0.19.0 memory release)
-        elapsed_ms_before = session.unified_state.reasoning_rounds[0].elapsed_ms if session.unified_state.reasoning_rounds else 0
+        elapsed_ms_before = (
+            session.unified_state.reasoning_rounds[0].elapsed_ms
+            if session.unified_state.reasoning_rounds
+            else 0
+        )
         ctrl._sessions["msg_fc"] = session
 
         await ctrl._do_linear_complete(session)
@@ -1021,7 +1068,9 @@ class TestDoLinearComplete:
         session.state = STREAMING
         session.card_id = "card_drain"
         session._creation_stages.add("panel")
-        session._creation_stages.add("answer")  # Answer element must exist for drain to work
+        session._creation_stages.add(
+            "answer"
+        )  # Answer element must exist for drain to work
         session._creation_stages.add("hint_removed")
         # Simulate: last answer delta arrived but flush hasn't fired yet
         session.unified_state.on_answer_delta("final chunk")
@@ -1144,7 +1193,6 @@ class TestDoLinearComplete:
         session._creation_stages.add("hint_removed")
         # No dirty data
         ctrl._sessions["msg_clean"] = session
-
 
         assert await ctrl._do_linear_complete(session) is True
 
@@ -1320,10 +1368,14 @@ class TestDoLinearComplete:
 
         found_answer_update = False
         for call in batch_calls:
-            actions = call.args[1] if len(call.args) > 1 else call.kwargs.get("actions", [])
+            actions = (
+                call.args[1] if len(call.args) > 1 else call.kwargs.get("actions", [])
+            )
             for action in actions:
-                if (action.get("action") == "partial_update_element"
-                        and action.get("params", {}).get("element_id") == ANSWER_ELEMENT_ID):
+                if (
+                    action.get("action") == "partial_update_element"
+                    and action.get("params", {}).get("element_id") == ANSWER_ELEMENT_ID
+                ):
                     found_answer_update = True
                     content = action["params"]["partial_element"].get("content", "")
                     assert "这是完整的回答内容" in content, (
@@ -1341,6 +1393,7 @@ class TestDoLinearComplete:
             "Without this, the last chunk of answer text is permanently lost when "
             "close_streaming fires before Feishu's typewriter queue finishes rendering."
         )
+
 
 class TestLinearOnThinkingNativeReasoningDedup:
     """Bug fix: _linear_on_thinking must skip reasoning when already tracked.
@@ -1362,7 +1415,8 @@ class TestLinearOnThinkingNativeReasoningDedup:
         ctrl = _setup_ctrl()
         # Enable show_reasoning so _linear_on_thinking processes reasoning text
         ctrl._cfg._raw.setdefault("hermes_lark_streaming", {}).setdefault(
-            "display", {"show_reasoning": True},
+            "display",
+            {"show_reasoning": True},
         )
         # Also set the cached config so _cfg.show_reasoning returns True
         ctrl._cfg._reload_cached = lambda: {
@@ -1383,10 +1437,15 @@ class TestLinearOnThinkingNativeReasoningDedup:
         # Use Reasoning:\n prefix so split_reasoning_text classifies
         # this as reasoning_text, not answer_text
         with patch.object(ctrl, "_schedule_linear_flush"):
-            ctrl._linear_on_thinking(session, "Reasoning:\nThe user is asking about Python")
+            ctrl._linear_on_thinking(
+                session, "Reasoning:\nThe user is asking about Python"
+            )
 
         # Reasoning should have been processed (no native reasoning tracked yet)
-        assert session.unified_state.current_reasoning_text == "The user is asking about Python"
+        assert (
+            session.unified_state.current_reasoning_text
+            == "The user is asking about Python"
+        )
 
     def test_dedup_when_reasoning_already_tracked(self) -> None:
         """When reasoning has already been tracked, reasoning is NOT re-appended."""
@@ -1396,17 +1455,25 @@ class TestLinearOnThinkingNativeReasoningDedup:
         # _current_reasoning, which _linear_on_thinking now uses as the dedup
         # guard (replacing the removed _native_reasoning_active flag).
         session.unified_state.on_reasoning_delta("The user is asking about Python")
-        assert session.unified_state.current_reasoning_text == "The user is asking about Python"
+        assert (
+            session.unified_state.current_reasoning_text
+            == "The user is asking about Python"
+        )
         assert session.unified_state.has_current_reasoning is True
 
         # Now interim_assistant_callback delivers the same accumulated text
         # Use Reasoning:\n prefix so split_reasoning_text classifies
         # this as reasoning_text, not answer_text
         with patch.object(ctrl, "_schedule_linear_flush"):
-            ctrl._linear_on_thinking(session, "Reasoning:\nThe user is asking about Python")
+            ctrl._linear_on_thinking(
+                session, "Reasoning:\nThe user is asking about Python"
+            )
 
         # Reasoning should NOT be doubled
-        assert session.unified_state.current_reasoning_text == "The user is asking about Python"
+        assert (
+            session.unified_state.current_reasoning_text
+            == "The user is asking about Python"
+        )
         assert "TheThe" not in session.unified_state.current_reasoning_text
 
     def test_dedup_with_mixed_reasoning_and_answer(self) -> None:
@@ -1435,6 +1502,7 @@ class TestLinearOnThinkingNativeReasoningDedup:
 def test_prune_skips_streaming_session() -> None:
     """v1.1.1: STREAMING 状态的 session 超 TTL 不被清理（避免 AI 回调丢失）."""
     from types import SimpleNamespace
+
     ctrl = StreamCardController()
     # STREAMING 状态（活跃），超 TTL
     active_session = SimpleNamespace(
@@ -1454,6 +1522,7 @@ def test_prune_skips_streaming_session() -> None:
 def test_prune_cleans_terminal_session() -> None:
     """v1.1.1: COMPLETED 状态的 session 超 TTL 正常清理."""
     from types import SimpleNamespace
+
     ctrl = StreamCardController()
     # COMPLETED 状态（终态），超 TTL
     terminal_session = SimpleNamespace(
@@ -1531,6 +1600,7 @@ async def test_drain_300309_falls_back_to_batch_update() -> None:
 async def test_drain_300313_falls_back_without_tag() -> None:
     """v1.1.1: drain 遇 300313 fallback 不带 tag（不再报 300312）."""
     from hermes_lark_streaming.feishu import CARDKIT_ELEMENT_NOT_FOUND
+
     ctrl = _setup_ctrl()
     session = _make_session("msg_313", linear=True)
     session.state = STREAMING
@@ -1562,8 +1632,8 @@ async def test_drain_300313_falls_back_without_tag() -> None:
                 assert "tag" not in partial, "partial_update_element 不应带 tag"
 
 
-
 # ─── v1.3.4 Regression Tests ──────────────────────────────────────────
+
 
 def test_v134_concurrency_seal_no_duplicate_session() -> None:
     """v1.3.4 P0 fix: on_message_started 不应在 on_interrupted 已创建 session 后再创建。
@@ -1580,7 +1650,9 @@ def test_v134_concurrency_seal_no_duplicate_session() -> None:
     _enable(ctrl, linear=True)
 
     # 模拟 concurrency seal：先创建一个 active session（旧消息）
-    with patch.object(ctrl, "_fire_and_forget", side_effect=lambda coro, loop: coro.close()):
+    with patch.object(
+        ctrl, "_fire_and_forget", side_effect=lambda coro, loop: coro.close()
+    ):
         ctrl.on_message_started(message_id="old_msg", chat_id="chat")
         assert "old_msg" in ctrl._sessions
 
@@ -1616,6 +1688,7 @@ async def test_v134_aborted_session_keeps_aborted_state() -> None:
     # 模拟 seal 成功
     async def _ok_seal(*args, **kwargs):
         return True
+
     ctrl._preservative_seal = _ok_seal  # type: ignore[method-assign]
 
     await ctrl._do_linear_complete(session)

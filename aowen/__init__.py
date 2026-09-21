@@ -36,21 +36,26 @@ _metrics: dict[str, Any] = {
 
 _error_codes: dict[int, int] = {}  # error_code → count
 
+
 def record_card_created() -> None:
     with _metrics_lock:
         _metrics["cards_created"] += 1
+
 
 def record_card_completed() -> None:
     with _metrics_lock:
         _metrics["cards_completed"] += 1
 
+
 def record_card_failed() -> None:
     with _metrics_lock:
         _metrics["cards_failed"] += 1
 
+
 def record_card_aborted() -> None:
     with _metrics_lock:
         _metrics["cards_aborted"] += 1
+
 
 def record_api_call(operation: str) -> None:
     with _metrics_lock:
@@ -60,6 +65,7 @@ def record_api_call(operation: str) -> None:
         elif operation == "cardkit_batch_update":
             _metrics["batch_update_calls"] += 1
 
+
 def record_api_error(code: int, operation: str = "") -> None:
     with _metrics_lock:
         _metrics["api_errors"] += 1
@@ -67,9 +73,11 @@ def record_api_error(code: int, operation: str = "") -> None:
         if operation == "cardkit_stream_element":
             _metrics["stream_element_failures"] += 1
 
+
 def set_active_sessions(count: int) -> None:
     with _metrics_lock:
         _metrics["active_sessions"] = count
+
 
 def record_inbound() -> None:
     """v1.8.0 (P2-1): 记录一条飞书入站消息（WS 渠道活性脉冲）。
@@ -81,6 +89,7 @@ def record_inbound() -> None:
     with _metrics_lock:
         _metrics["inbound_messages"] += 1
         _metrics["last_inbound_at"] = time.time()
+
 
 def get_metrics() -> dict[str, Any]:
     """Get current metrics snapshot."""
@@ -100,6 +109,7 @@ def get_metrics() -> dict[str, Any]:
             "error_codes": dict(_error_codes),
         }
 
+
 def _format_uptime(seconds: float) -> str:
     """Format uptime as human-readable string."""
     if seconds < 60:
@@ -110,10 +120,12 @@ def _format_uptime(seconds: float) -> str:
     hours = int(minutes // 60)
     return f"{hours}h {minutes % 60}m"
 
+
 def _get_version() -> str:
     """Get plugin version from plugin.yaml."""
     try:
         from pathlib import Path
+
         yaml_path = Path(__file__).resolve().parent.parent / "plugin.yaml"
         if yaml_path.exists():
             for line in yaml_path.read_text(encoding="utf-8").splitlines():
@@ -122,6 +134,7 @@ def _get_version() -> str:
     except Exception:
         pass
     return "unknown"
+
 
 # Color: green=success, orange=warning, red=error, blue=info, grey=neutral.
 _ICON_TOKENS: dict[str, str] = {
@@ -144,7 +157,16 @@ _COLOR_MAP: dict[str, str | None] = {
     "turquoise": "turquoise",
 }
 
-def _icon_div(icon_key: str, content: str, *, icon_color: str = "grey", text_size: str = "normal", text_color: str | None = None, icon_size: str = "16px 16px") -> dict:
+
+def _icon_div(
+    icon_key: str,
+    content: str,
+    *,
+    icon_color: str = "grey",
+    text_size: str = "normal",
+    text_color: str | None = None,
+    icon_size: str = "16px 16px",
+) -> dict:
     """Build div with standard_icon + lark_md text."""
     token = _ICON_TOKENS.get(icon_key, "info_outlined")
     text: dict = {"tag": "lark_md", "content": content, "text_size": text_size}
@@ -161,7 +183,10 @@ def _icon_div(icon_key: str, content: str, *, icon_color: str = "grey", text_siz
         "text": text,
     }
 
-def _metric_block(label: str, value: Any, *, icon_key: str = "info", color: str = "default") -> dict:
+
+def _metric_block(
+    label: str, value: Any, *, icon_key: str = "info", color: str = "default"
+) -> dict:
     """Build metric block: icon + grey label + bold colored value."""
     font_color = _COLOR_MAP.get(color)
     if font_color:
@@ -183,6 +208,7 @@ def _metric_block(label: str, value: Any, *, icon_key: str = "info", color: str 
         },
     }
 
+
 def _two_col(left: dict, right: dict) -> dict:
     """Build 2-column responsive row (stacks on mobile)."""
     return {
@@ -193,6 +219,7 @@ def _two_col(left: dict, right: dict) -> dict:
             {"tag": "column", "width": "weighted", "weight": 1, "elements": [right]},
         ],
     }
+
 
 def _three_col(c1: dict, c2: dict, c3: dict) -> dict:
     """Build 3-column responsive row (stacks on mobile)."""
@@ -206,6 +233,7 @@ def _three_col(c1: dict, c2: dict, c3: dict) -> dict:
         ],
     }
 
+
 def _section_title(text: str, *, color: str = "grey") -> dict:
     """Build section title — bold colored small text."""
     return {
@@ -218,7 +246,14 @@ def _section_title(text: str, *, color: str = "grey") -> dict:
         },
     }
 
-def _fold(title: str, elements: list[dict], *, expanded: bool = False, border_color: str = "grey") -> dict:
+
+def _fold(
+    title: str,
+    elements: list[dict],
+    *,
+    expanded: bool = False,
+    border_color: str = "grey",
+) -> dict:
     """Build collapsible panel."""
     return {
         "tag": "collapsible_panel",
@@ -246,6 +281,7 @@ def _fold(title: str, elements: list[dict], *, expanded: bool = False, border_co
         "elements": elements,
     }
 
+
 def _footer_note(content: str) -> dict:
     """Build footer note — small grey text."""
     return {
@@ -258,7 +294,9 @@ def _footer_note(content: str) -> dict:
         },
     }
 
+
 # ── Card builders ──
+
 
 def build_help_card() -> dict[str, Any]:
     """Build help card — query (read-only) and action (state-changing) commands."""
@@ -275,8 +313,12 @@ def build_help_card() -> dict[str, Any]:
     ]
 
     elements: list[dict] = [
-        _icon_div("info", f"**hermes-lark-streaming** v{version}",
-                  icon_color="blue", icon_size="20px 20px"),
+        _icon_div(
+            "info",
+            f"**hermes-lark-streaming** v{version}",
+            icon_color="blue",
+            icon_size="20px 20px",
+        ),
         {
             "tag": "div",
             "text": {
@@ -291,17 +333,25 @@ def build_help_card() -> dict[str, Any]:
     ]
 
     for cmd, desc, icon_key in query_cmds:
-        elements.append(_icon_div(
-            icon_key, f"`/aowen {cmd}` — {desc}", icon_color="blue",
-        ))
+        elements.append(
+            _icon_div(
+                icon_key,
+                f"`/aowen {cmd}` — {desc}",
+                icon_color="blue",
+            )
+        )
 
     elements.append({"tag": "hr"})
     elements.append(_section_title("操作类命令（会修改状态）", color="orange"))
 
     for cmd, desc, icon_key in action_cmds:
-        elements.append(_icon_div(
-            icon_key, f"`/aowen {cmd}` — {desc}", icon_color="orange",
-        ))
+        elements.append(
+            _icon_div(
+                icon_key,
+                f"`/aowen {cmd}` — {desc}",
+                icon_color="orange",
+            )
+        )
 
     elements.append({"tag": "hr"})
     elements.append(_footer_note("发送 `/aowen <命令名>` 使用对应功能。"))
@@ -309,9 +359,13 @@ def build_help_card() -> dict[str, Any]:
     return {
         "schema": "2.0",
         "config": {"update_multi": True},
-        "header": {"title": {"tag": "plain_text", "content": "插件命令帮助"}, "template": "blue"},
+        "header": {
+            "title": {"tag": "plain_text", "content": "插件命令帮助"},
+            "template": "blue",
+        },
         "body": {"elements": elements},
     }
+
 
 def build_status_card() -> dict[str, Any]:
     """Build status card — 3 metrics, patch status, collapsible config."""
@@ -330,14 +384,19 @@ def build_status_card() -> dict[str, Any]:
         from .. import __version__ as plugin_version
 
         # ── Top: 3 key metrics ──
-        version_block = _metric_block("版本", f"v{plugin_version}", icon_key="info", color="blue")
+        version_block = _metric_block(
+            "版本", f"v{plugin_version}", icon_key="info", color="blue"
+        )
         creds_block = _metric_block(
-            "飞书客户端", creds_status[0],
+            "飞书客户端",
+            creds_status[0],
             icon_key="success" if ctrl_ready else "locked",
             color=creds_status[1],
         )
         active_block = _metric_block(
-            "活跃会话", active_count, icon_key="agent",
+            "活跃会话",
+            active_count,
+            icon_key="agent",
             color="orange" if active_count > 0 else "default",
         )
 
@@ -348,25 +407,41 @@ def build_status_card() -> dict[str, Any]:
                 if key in ("version", "hermes_layout"):
                     continue
                 if val in ("✓", "applied"):
-                    patch_elements.append(_icon_div(
-                        "success", f"`{key}` · {val}",
-                        icon_color="green", text_size="notation",
-                    ))
+                    patch_elements.append(
+                        _icon_div(
+                            "success",
+                            f"`{key}` · {val}",
+                            icon_color="green",
+                            text_size="notation",
+                        )
+                    )
                 elif "pending" in str(val):
-                    patch_elements.append(_icon_div(
-                        "warning", f"`{key}` · {val}",
-                        icon_color="orange", text_size="notation",
-                    ))
+                    patch_elements.append(
+                        _icon_div(
+                            "warning",
+                            f"`{key}` · {val}",
+                            icon_color="orange",
+                            text_size="notation",
+                        )
+                    )
                 else:
-                    patch_elements.append(_icon_div(
-                        "locked", f"`{key}` · {val}",
-                        icon_color="red", text_size="notation",
-                    ))
+                    patch_elements.append(
+                        _icon_div(
+                            "locked",
+                            f"`{key}` · {val}",
+                            icon_color="red",
+                            text_size="notation",
+                        )
+                    )
         else:
-            patch_elements.append(_icon_div(
-                "warning", "补丁状态不可用",
-                icon_color="orange", text_size="notation",
-            ))
+            patch_elements.append(
+                _icon_div(
+                    "warning",
+                    "补丁状态不可用",
+                    icon_color="orange",
+                    text_size="notation",
+                )
+            )
 
         # ── Config section (collapsible, grouped by category) ──
         has_creds = bool(cfg.feishu_app_id or cfg.env_app_id)
@@ -396,13 +471,41 @@ def build_status_card() -> dict[str, Any]:
 
         config_elements: list[dict] = [
             _section_title("流式控制", color="blue"),
-            {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(streaming_cfg), "text_size": "notation"}},
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": "\n".join(streaming_cfg),
+                    "text_size": "notation",
+                },
+            },
             _section_title("卡片行为", color="blue"),
-            {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(card_cfg), "text_size": "notation"}},
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": "\n".join(card_cfg),
+                    "text_size": "notation",
+                },
+            },
             _section_title("数量限制", color="blue"),
-            {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(limit_cfg), "text_size": "notation"}},
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": "\n".join(limit_cfg),
+                    "text_size": "notation",
+                },
+            },
             _section_title("凭证", color="blue"),
-            {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(creds_cfg), "text_size": "notation"}},
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": "\n".join(creds_cfg),
+                    "text_size": "notation",
+                },
+            },
         ]
 
         return {
@@ -421,7 +524,9 @@ def build_status_card() -> dict[str, Any]:
                     {"tag": "hr"},
                     _fold("当前配置（点击展开）", config_elements, expanded=False),
                     {"tag": "hr"},
-                    _footer_note("修改 config.yaml 后发送 `/aowen config reload` 生效。"),
+                    _footer_note(
+                        "修改 config.yaml 后发送 `/aowen config reload` 生效。"
+                    ),
                 ],
             },
         }
@@ -430,11 +535,19 @@ def build_status_card() -> dict[str, Any]:
         return {
             "schema": "2.0",
             "config": {"update_multi": True},
-            "header": {"title": {"tag": "plain_text", "content": "插件状态"}, "template": "red"},
-            "body": {"elements": [
-                _icon_div("locked", "状态卡片构建失败，请查看日志", icon_color="red"),
-            ]},
+            "header": {
+                "title": {"tag": "plain_text", "content": "插件状态"},
+                "template": "red",
+            },
+            "body": {
+                "elements": [
+                    _icon_div(
+                        "locked", "状态卡片构建失败，请查看日志", icon_color="red"
+                    ),
+                ]
+            },
         }
+
 
 def build_monitor_card() -> dict[str, Any]:
     """Build monitor card — top summary, lifecycle, API calls, error codes."""
@@ -448,33 +561,61 @@ def build_monitor_card() -> dict[str, Any]:
     elements: list[dict] = [
         _three_col(
             _metric_block("版本", f"v{version}", icon_key="info", color="blue"),
-            _metric_block("运行时间", m["uptime_human"], icon_key="warning", color="default"),
-            _metric_block("活跃会话", m["active_sessions"], icon_key="agent",
-                          color="orange" if m["active_sessions"] > 0 else "default"),
+            _metric_block(
+                "运行时间", m["uptime_human"], icon_key="warning", color="default"
+            ),
+            _metric_block(
+                "活跃会话",
+                m["active_sessions"],
+                icon_key="agent",
+                color="orange" if m["active_sessions"] > 0 else "default",
+            ),
         ),
         {"tag": "hr"},
         _section_title("卡片生命周期", color="blue"),
         _two_col(
             _metric_block("创建", m["cards_created"], icon_key="info", color="default"),
-            _metric_block("已完成", m["cards_completed"], icon_key="success", color="green"),
+            _metric_block(
+                "已完成", m["cards_completed"], icon_key="success", color="green"
+            ),
         ),
         _two_col(
-            _metric_block("失败", m["cards_failed"], icon_key="locked", color=failed_color),
-            _metric_block("已停止", m["cards_aborted"], icon_key="warning", color="default"),
+            _metric_block(
+                "失败", m["cards_failed"], icon_key="locked", color=failed_color
+            ),
+            _metric_block(
+                "已停止", m["cards_aborted"], icon_key="warning", color="default"
+            ),
         ),
         {"tag": "hr"},
         _section_title("API 调用", color="blue"),
         _two_col(
             _metric_block("总调用", m["api_calls"], icon_key="info", color="default"),
-            _metric_block("错误", m["api_errors"], icon_key="locked", color=api_err_color),
+            _metric_block(
+                "错误", m["api_errors"], icon_key="locked", color=api_err_color
+            ),
         ),
         _two_col(
-            _metric_block("流式调用", m["stream_element_calls"], icon_key="info", color="default"),
-            _metric_block("流式失败", m["stream_element_failures"], icon_key="locked", color=stream_fail_color),
+            _metric_block(
+                "流式调用", m["stream_element_calls"], icon_key="info", color="default"
+            ),
+            _metric_block(
+                "流式失败",
+                m["stream_element_failures"],
+                icon_key="locked",
+                color=stream_fail_color,
+            ),
         ),
         _two_col(
-            _metric_block("批量更新", m["batch_update_calls"], icon_key="info", color="default"),
-            _metric_block("活跃会话", m["active_sessions"], icon_key="agent", color="orange" if m["active_sessions"] > 0 else "default"),
+            _metric_block(
+                "批量更新", m["batch_update_calls"], icon_key="info", color="default"
+            ),
+            _metric_block(
+                "活跃会话",
+                m["active_sessions"],
+                icon_key="agent",
+                color="orange" if m["active_sessions"] > 0 else "default",
+            ),
         ),
         {"tag": "hr"},
         # v1.8.0 (P2-1): WS 渠道健康——lark SDK 重连耗尽后线程静默死亡，
@@ -482,13 +623,21 @@ def build_monitor_card() -> dict[str, Any]:
         # 唯一可观测的渠道活性信号。长时间无入站而网关在线 → 疑似静默断连。
         _section_title("渠道健康", color="blue"),
         _two_col(
-            _metric_block("入站消息", m["inbound_messages"], icon_key="info", color="default"),
-            _metric_block("最近入站", m["last_inbound_age_human"], icon_key="warning", color="default"),
+            _metric_block(
+                "入站消息", m["inbound_messages"], icon_key="info", color="default"
+            ),
+            _metric_block(
+                "最近入站",
+                m["last_inbound_age_human"],
+                icon_key="warning",
+                color="default",
+            ),
         ),
         _icon_div(
             "info",
             "长时间无入站而网关在线 → 疑似 WS 静默断连（SDK 重连耗尽后适配器仍报已连接）",
-            icon_color="grey", text_size="notation",
+            icon_color="grey",
+            text_size="notation",
         ),
     ]
 
@@ -497,26 +646,35 @@ def build_monitor_card() -> dict[str, Any]:
         total_err = sum(m["error_codes"].values()) or 1
         for code, count in sorted(m["error_codes"].items()):
             pct = count * 100 // total_err
-            err_elements.append(_icon_div(
-                "locked",
-                f"`{code}` · {count} 次 · {pct}%",
-                icon_color="red", text_size="notation",
-            ))
+            err_elements.append(
+                _icon_div(
+                    "locked",
+                    f"`{code}` · {count} 次 · {pct}%",
+                    icon_color="red",
+                    text_size="notation",
+                )
+            )
         elements.append({"tag": "hr"})
         elements.extend(err_elements)
 
     elements.append({"tag": "hr"})
-    elements.append(_footer_note(
-        f"更新时间: {time.strftime('%Y-%m-%d %H:%M:%S')} · "
-        f"发送 `/aowen monitor` 刷新 · `/aowen monitor reset` 重置"
-    ))
+    elements.append(
+        _footer_note(
+            f"更新时间: {time.strftime('%Y-%m-%d %H:%M:%S')} · "
+            f"发送 `/aowen monitor` 刷新 · `/aowen monitor reset` 重置"
+        )
+    )
 
     return {
         "schema": "2.0",
         "config": {"update_multi": True},
-        "header": {"title": {"tag": "plain_text", "content": "插件监控面板"}, "template": "blue"},
+        "header": {
+            "title": {"tag": "plain_text", "content": "插件监控面板"},
+            "template": "blue",
+        },
         "body": {"elements": elements},
     }
+
 
 def build_reset_card() -> dict[str, Any]:
     """Build reset confirmation card."""
@@ -529,13 +687,18 @@ def build_reset_card() -> dict[str, Any]:
         },
         "body": {
             "elements": [
-                _icon_div("success", "**所有计数器已清零，运行时间重新计时。**",
-                          icon_color="green", icon_size="20px 20px"),
+                _icon_div(
+                    "success",
+                    "**所有计数器已清零，运行时间重新计时。**",
+                    icon_color="green",
+                    icon_size="20px 20px",
+                ),
                 {"tag": "hr"},
                 _footer_note("现在发送 `/aowen monitor` 查看重置后的数据。"),
             ],
         },
     }
+
 
 def _build_unknown_command_card(subcommand: str) -> dict:
     """Build unknown command card."""
@@ -548,13 +711,18 @@ def _build_unknown_command_card(subcommand: str) -> dict:
         },
         "body": {
             "elements": [
-                _icon_div("warning", f"未知命令: `/aowen {subcommand}`",
-                          icon_color="orange", icon_size="20px 20px"),
+                _icon_div(
+                    "warning",
+                    f"未知命令: `/aowen {subcommand}`",
+                    icon_color="orange",
+                    icon_size="20px 20px",
+                ),
                 {"tag": "hr"},
                 _footer_note("发送 `/aowen help` 查看可用命令列表。"),
             ],
         },
     }
+
 
 def build_interrupt_hint_card() -> dict[str, Any]:
     """Build hint card shown when /aowen sent during active agent run."""
@@ -570,7 +738,8 @@ def build_interrupt_hint_card() -> dict[str, Any]:
                 _icon_div(
                     "warning",
                     "**AI 正在回复上一条消息，无法处理 /aowen 命令。**",
-                    icon_color="orange", icon_size="20px 20px",
+                    icon_color="orange",
+                    icon_size="20px 20px",
                 ),
                 {"tag": "hr"},
                 _icon_div(
@@ -584,10 +753,12 @@ def build_interrupt_hint_card() -> dict[str, Any]:
         },
     }
 
+
 def _handle_config_reload() -> dict:
     """Handle /aowen config reload."""
     try:
         from ..config import Config
+
         cfg = Config()
         cfg.reload()
         _logger.info("HLS: config reloaded via /aowen config reload")
@@ -600,8 +771,12 @@ def _handle_config_reload() -> dict:
             },
             "body": {
                 "elements": [
-                    _icon_div("success", "**配置已重新加载，新配置已立即生效。**",
-                              icon_color="green", icon_size="20px 20px"),
+                    _icon_div(
+                        "success",
+                        "**配置已重新加载，新配置已立即生效。**",
+                        icon_color="green",
+                        icon_size="20px 20px",
+                    ),
                     {"tag": "hr"},
                     _footer_note(f"加载时间: {time.strftime('%Y-%m-%d %H:%M:%S')}"),
                 ],
@@ -619,18 +794,36 @@ def _handle_config_reload() -> dict:
             },
             "body": {
                 "elements": [
-                    _icon_div("locked", "**配置加载失败，插件继续使用旧配置。**",
-                              icon_color="red", icon_size="20px 20px"),
+                    _icon_div(
+                        "locked",
+                        "**配置加载失败，插件继续使用旧配置。**",
+                        icon_color="red",
+                        icon_size="20px 20px",
+                    ),
                     {"tag": "hr"},
-                    _fold("错误详情（点击展开）", [
-                        {"tag": "div", "text": {"tag": "lark_md",
-                          "content": f"```\n{err_text}\n```", "text_size": "notation"}},
-                    ], expanded=False, border_color="red"),
+                    _fold(
+                        "错误详情（点击展开）",
+                        [
+                            {
+                                "tag": "div",
+                                "text": {
+                                    "tag": "lark_md",
+                                    "content": f"```\n{err_text}\n```",
+                                    "text_size": "notation",
+                                },
+                            },
+                        ],
+                        expanded=False,
+                        border_color="red",
+                    ),
                 ],
             },
         }
 
-def handle_pre_gateway_dispatch(event: Any, gateway: Any = None, **kwargs) -> dict | None:
+
+def handle_pre_gateway_dispatch(
+    event: Any, gateway: Any = None, **kwargs
+) -> dict | None:
     """Handle /aowen commands."""
     try:
         text = getattr(event, "text", "") or ""
@@ -654,7 +847,12 @@ def handle_pre_gateway_dispatch(event: Any, gateway: Any = None, **kwargs) -> di
         subcommand = parts[1].strip().lower() if len(parts) > 1 else "help"
         sub_arg = parts[2].strip().lower() if len(parts) > 2 else ""
 
-        _logger.info("HLS: /aowen %s %s command detected, chat=%s", subcommand, sub_arg, chat_id[:12])
+        _logger.info(
+            "HLS: /aowen %s %s command detected, chat=%s",
+            subcommand,
+            sub_arg,
+            chat_id[:12],
+        )
 
         if subcommand == "help" or subcommand == "":
             _send_card_async(chat_id, build_help_card(), "help")
@@ -679,13 +877,16 @@ def handle_pre_gateway_dispatch(event: Any, gateway: Any = None, **kwargs) -> di
                 return _skip("/aowen monitor handled")
 
         else:
-            _send_card_async(chat_id, _build_unknown_command_card(subcommand), "unknown")
+            _send_card_async(
+                chat_id, _build_unknown_command_card(subcommand), "unknown"
+            )
             return _skip(f"/aowen {subcommand} unknown")
 
     except Exception:
         # Pitfall: must return skip to block dispatch, else /aowen foo reaches LLM.
         _logger.exception("HLS: /aowen handler error — suppressing agent dispatch")
         return _skip("/aowen handler error suppressed")
+
 
 def _do_reset() -> None:
     """Reset metrics counters."""
@@ -715,7 +916,10 @@ def _do_reset() -> None:
         }
         _error_codes.clear()
 
-    _logger.info("HLS: metrics reset (was: created=%d, errors=%d)", old_created, old_errors)
+    _logger.info(
+        "HLS: metrics reset (was: created=%d, errors=%d)", old_created, old_errors
+    )
+
 
 def _send_card_async(chat_id: str, card: dict, cmd_name: str) -> None:
     """Send card fire-and-forget via FeishuClient. Lazy-inits if not yet ready."""
@@ -756,8 +960,10 @@ def _send_card_async(chat_id: str, card: dict, cmd_name: str) -> None:
     _aowen_pending_tasks.add(task)
     task.add_done_callback(_aowen_pending_tasks.discard)
 
+
 def _skip(reason: str) -> dict:
     return {"action": "skip", "reason": reason}
+
 
 __all__ = [
     "record_card_created",

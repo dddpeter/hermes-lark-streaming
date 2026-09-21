@@ -84,9 +84,7 @@ class TestClarifyCardNormalization:
         # ── Send to real Feishu (or mock) and verify acceptance ──
         if runner.is_real_mode:
             client = runner._controller._client
-            msg_id = await client.send_card_to_chat(
-                runner._real_chat_id, card
-            )
+            msg_id = await client.send_card_to_chat(runner._real_chat_id, card)
             assert msg_id, "Card send failed"
         else:
             # Mock mode: just verify the card was "sent"
@@ -151,7 +149,9 @@ class TestClarifyCardNormalization:
 
         # Verify the question is also escaped (first element)
         question_content = elements[0]["text"]["content"]
-        assert "\\[" in question_content or "\\" not in question_content  # question has no special chars here
+        assert (
+            "\\[" in question_content or "\\" not in question_content
+        )  # question has no special chars here
 
     async def test_clarify_confirmed_card_escaped(self, runner):
         """Confirmed card with special chars must be escaped."""
@@ -230,15 +230,30 @@ class TestClarifyDispatchPatch:
             """Simulates the real (deferred-loaded) FeishuAdapter class B.
             send_clarify here mirrors hermes BasePlatformAdapter default
             (plain-text fallback) — before patching this is what would run."""
-            async def send(self, chat_id, content, reply_to=None, metadata=None, **kwargs):
+
+            async def send(
+                self, chat_id, content, reply_to=None, metadata=None, **kwargs
+            ):
                 return "sent"
-            async def send_clarify(self, chat_id, question, choices, clarify_id,
-                                   session_key, metadata=None, **kwargs):
+
+            async def send_clarify(
+                self,
+                chat_id,
+                question,
+                choices,
+                clarify_id,
+                session_key,
+                metadata=None,
+                **kwargs,
+            ):
                 return "PLAIN_TEXT_FALLBACK"
+
             async def edit_message(self, *a, **kw):
                 return None
+
             async def add_reaction(self, *a, **kw):
                 return None
+
             async def delete_reaction(self, *a, **kw):
                 return None
 
@@ -251,10 +266,12 @@ class TestClarifyDispatchPatch:
             # The wrapper must be installed on the class (name check is robust
             # — _intercepted_send_clarify is the closure created by
             # _wrap_feishu_adapter_send_clarify)
-            assert cls.send_clarify.__name__ == "_intercepted_send_clarify", \
+            assert cls.send_clarify.__name__ == "_intercepted_send_clarify", (
                 f"send_clarify must be wrapped, got {cls.send_clarify.__name__!r}"
-            assert cls.send.__name__ == "_intercepted_send", \
+            )
+            assert cls.send.__name__ == "_intercepted_send", (
                 f"send must be wrapped, got {cls.send.__name__!r}"
+            )
             # And class id must be recorded
             assert id(cls) in P._patched_feishu_classes
         finally:
@@ -273,17 +290,33 @@ class TestClarifyDispatchPatch:
         class FakeRealFeishuAdapter:
             """模拟 hermes v0.17+ deferred loading 产生的真身 class B。
             send_clarify 走 BasePlatformAdapter 默认纯文本实现。"""
+
             def __init__(self, config):
                 self.config = config
-            async def send(self, chat_id, content, reply_to=None, metadata=None, **kwargs):
+
+            async def send(
+                self, chat_id, content, reply_to=None, metadata=None, **kwargs
+            ):
                 return "sent"
-            async def send_clarify(self, chat_id, question, choices, clarify_id,
-                                   session_key, metadata=None, **kwargs):
+
+            async def send_clarify(
+                self,
+                chat_id,
+                question,
+                choices,
+                clarify_id,
+                session_key,
+                metadata=None,
+                **kwargs,
+            ):
                 return "PLAIN_TEXT_FALLBACK"
+
             async def edit_message(self, *a, **kw):
                 return None
+
             async def add_reaction(self, *a, **kw):
                 return None
+
             async def delete_reaction(self, *a, **kw):
                 return None
 
@@ -300,10 +333,12 @@ class TestClarifyDispatchPatch:
             # Simulate gateway calling create_adapter("feishu", config)
             adapter = wrapped_create("feishu", {"app_id": "x"})
             # After hook, the instance's class must be patched
-            assert id(type(adapter)) in P._patched_feishu_classes, \
+            assert id(type(adapter)) in P._patched_feishu_classes, (
                 "create_adapter hook must register the real class in _patched_feishu_classes"
+            )
             # And send_clarify on the instance must now be the wrapper
-            assert type(adapter).send_clarify.__name__ == "_intercepted_send_clarify", \
+            assert type(adapter).send_clarify.__name__ == "_intercepted_send_clarify", (
                 f"send_clarify must be wrapped after hook, got {type(adapter).send_clarify.__name__!r}"
+            )
         finally:
             P._patched_feishu_classes.discard(id(cls_b))

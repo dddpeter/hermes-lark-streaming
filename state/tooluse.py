@@ -38,17 +38,21 @@ class ToolStep:
     detail: str = ""
     output: str = ""
     error: str = ""
-    result_block: dict[str, Any] | None = None  # {"language": "json"|"text", "content": str}
+    result_block: dict[str, Any] | None = (
+        None  # {"language": "json"|"text", "content": str}
+    )
     error_block: dict[str, Any] | None = None
     started_at: float | None = None
     elapsed_ms: float = 0.0
     # v1.8.3: stable identity for the panel fragment cache (0 = uncached).
     uid: int = 0
 
+
 @dataclass
 class ToolSession:
     steps: list[ToolStep] = field(default_factory=list)
     started_at: float | None = None
+
 
 _SENSITIVE_NAME_RE = re.compile(
     r"token|secret|password|api[_-]?key|authorization|cookie|credential"
@@ -56,7 +60,9 @@ _SENSITIVE_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
-_INLINE_ASSIGNMENT_RE = re.compile(r'(^|[\s"\'`])([A-Za-z_][A-Za-z0-9_]*)(=(?:"[^"]*"|\'[^\']*\'|[^\s"\'`]+))')
+_INLINE_ASSIGNMENT_RE = re.compile(
+    r'(^|[\s"\'`])([A-Za-z_][A-Za-z0-9_]*)(=(?:"[^"]*"|\'[^\']*\'|[^\s"\'`]+))'
+)
 _AUTH_HEADER_RE = re.compile(
     r"(Authorization\s*:\s*(?:Bearer|Basic|Token)\s+)([^\'\"\s]+)",
     re.IGNORECASE,
@@ -71,6 +77,7 @@ _SECRET_FLAG_RE = re.compile(
 _RE_HTML_TAG = re.compile(r"<[^>]+>")
 _RE_BACKTICK_RUN_TOOLUSE = re.compile(r"`+")
 _RE_PATH_REDACT = re.compile(r'(^|[\s=\'"()])([~./][^\s\'"()]+)')
+
 
 def redact_inline_secrets(value: str) -> str:
     """脱敏 key=secret、Authorization header、--flag secret 模式."""
@@ -89,8 +96,11 @@ def redact_inline_secrets(value: str) -> str:
 
     return _SECRET_FLAG_RE.sub(
         _redact_flag,
-        _AUTH_HEADER_RE.sub(r"\1[redacted]", _INLINE_ASSIGNMENT_RE.sub(_redact_assign, value)),
+        _AUTH_HEADER_RE.sub(
+            r"\1[redacted]", _INLINE_ASSIGNMENT_RE.sub(_redact_assign, value)
+        ),
     )
+
 
 def _sanitize_detail(text: str, sanitizer: str | None) -> str:
     """根据 sanitizer 类型清洗 detail 文本."""
@@ -103,7 +113,9 @@ def _sanitize_detail(text: str, sanitizer: str | None) -> str:
         cleaned = redact_inline_secrets(cleaned)
         return _redact_paths(cleaned)
     if sanitizer == "path":
-        return _basename_only(re.sub(r"^(?:from|file|path)\s+", "", cleaned, flags=re.IGNORECASE).strip())
+        return _basename_only(
+            re.sub(r"^(?:from|file|path)\s+", "", cleaned, flags=re.IGNORECASE).strip()
+        )
     if sanitizer == "search":
         return cleaned.strip("'\"")
     if sanitizer == "url":
@@ -112,6 +124,7 @@ def _sanitize_detail(text: str, sanitizer: str | None) -> str:
         return cleaned.strip("'\"")
     return cleaned
 
+
 def _redact_paths(text: str) -> str:
     """命令中路径只保留 basename."""
     return _RE_PATH_REDACT.sub(
@@ -119,13 +132,20 @@ def _redact_paths(text: str) -> str:
         text,
     )
 
+
 def _basename_only(text: str) -> str:
     if not text:
         return text
     return os.path.basename(text.replace("\\", "/").rstrip("/"))
 
+
 _TOOL_DESCRIPTORS: list[dict[str, Any]] = [
-    {"aliases": ["skill"], "icon": "app-default_outlined", "title": "Load skill", "sanitizer": None},
+    {
+        "aliases": ["skill"],
+        "icon": "app-default_outlined",
+        "title": "Load skill",
+        "sanitizer": None,
+    },
     {
         "aliases": ["read", "open"],
         "icon": "file-link-text_outlined",
@@ -153,8 +173,18 @@ _TOOL_DESCRIPTORS: list[dict[str, Any]] = [
         "sanitizer": "url",
         "no_result": True,
     },
-    {"aliases": ["grep"], "icon": "doc-search_outlined", "title": "Search text", "sanitizer": "search"},
-    {"aliases": ["glob"], "icon": "folder_outlined", "title": "Search files", "sanitizer": "path"},
+    {
+        "aliases": ["grep"],
+        "icon": "doc-search_outlined",
+        "title": "Search text",
+        "sanitizer": "search",
+    },
+    {
+        "aliases": ["glob"],
+        "icon": "folder_outlined",
+        "title": "Search files",
+        "sanitizer": "path",
+    },
     {
         "aliases": ["exec", "bash", "command", "run"],
         "icon": "setting_outlined",
@@ -167,10 +197,23 @@ _TOOL_DESCRIPTORS: list[dict[str, Any]] = [
         "title": "Browser",
         "no_result": True,
     },
-    {"aliases": ["agent", "task", "spawn"], "icon": "robot_outlined", "title": "Run sub-agent"},
-    {"aliases": ["check", "determine", "verify"], "icon": "list-check_outlined", "title": "Check"},
-    {"aliases": ["summarize", "analyze", "prepare"], "icon": "report_outlined", "title": "Analyze"},
+    {
+        "aliases": ["agent", "task", "spawn"],
+        "icon": "robot_outlined",
+        "title": "Run sub-agent",
+    },
+    {
+        "aliases": ["check", "determine", "verify"],
+        "icon": "list-check_outlined",
+        "title": "Check",
+    },
+    {
+        "aliases": ["summarize", "analyze", "prepare"],
+        "icon": "report_outlined",
+        "title": "Analyze",
+    },
 ]
+
 
 def _resolve_tool_descriptor(name: str | None) -> dict[str, Any] | None:
     if not name:
@@ -182,14 +225,17 @@ def _resolve_tool_descriptor(name: str | None) -> dict[str, Any] | None:
                 return desc
     return None
 
+
 def _humanize_tool_name(name: str) -> str:
     cleaned = name.replace("-", " ").replace("_", " ").strip()
     if not cleaned:
         return "Tool"
     return cleaned[0].upper() + cleaned[1:]
 
+
 def _format_duration_label(ms: float) -> str:
     return f"{ms:.0f} ms" if ms < 1000 else f"{(ms / 1000):.1f} s"
+
 
 def _build_display_block(
     value: Any,
@@ -213,19 +259,32 @@ def _build_display_block(
                 return _fenced_block("json", pretty)
             except json.JSONDecodeError:
                 pass
-        return _fenced_block("text" if fallback_lang == "json" else fallback_lang, normalized)
+        return _fenced_block(
+            "text" if fallback_lang == "json" else fallback_lang, normalized
+        )
     if isinstance(value, (dict, list)):
         try:
-            return _fenced_block("json", json.dumps(value, ensure_ascii=False, indent=2))
+            return _fenced_block(
+                "json", json.dumps(value, ensure_ascii=False, indent=2)
+            )
         except (TypeError, ValueError):
             pass
     normalized = str(value).strip()
     return _fenced_block("text", normalized) if normalized else None
 
+
 def _fenced_block(language: str, content: str) -> dict[str, Any]:
     # v1.7.0 (R2-05): precompiled backtick-run regex
-    fence = "`" * max(3, max((len(m) for m in _RE_BACKTICK_RUN_TOOLUSE.findall(content)), default=0) + 1)
-    return {"language": language, "content": content, "fenced": f"{fence}{language}\n{content}\n{fence}"}
+    fence = "`" * max(
+        3,
+        max((len(m) for m in _RE_BACKTICK_RUN_TOOLUSE.findall(content)), default=0) + 1,
+    )
+    return {
+        "language": language,
+        "content": content,
+        "fenced": f"{fence}{language}\n{content}\n{fence}",
+    }
+
 
 class ToolUseTracker:
     """按 session 隔离，每个会话独立生命周期."""
@@ -269,11 +328,19 @@ class ToolUseTracker:
                 step.status = "error" if error else "success"
                 step.error = error
                 step.output = output
-                step.elapsed_ms = (time.time() - step.started_at) * 1000 if step.started_at is not None else 0.0
+                step.elapsed_ms = (
+                    (time.time() - step.started_at) * 1000
+                    if step.started_at is not None
+                    else 0.0
+                )
                 if error:
-                    step.error_block = _build_display_block(error, "text", sanitizer=sanitizer)
+                    step.error_block = _build_display_block(
+                        error, "text", sanitizer=sanitizer
+                    )
                 elif output:
-                    step.result_block = _build_display_block(output, "json", sanitizer=sanitizer)
+                    step.result_block = _build_display_block(
+                        output, "json", sanitizer=sanitizer
+                    )
                 return
         # v1.7.0 (R2-03): the fallback append previously bypassed _max_steps —
         # when record_start had silently dropped steps at the cap, every
@@ -289,8 +356,12 @@ class ToolUseTracker:
                 output=output,
                 error=error,
                 started_at=time.time(),
-                error_block=_build_display_block(error, "text", sanitizer=sanitizer) if error else None,
-                result_block=_build_display_block(output, "json", sanitizer=sanitizer) if output else None,
+                error_block=_build_display_block(error, "text", sanitizer=sanitizer)
+                if error
+                else None,
+                result_block=_build_display_block(output, "json", sanitizer=sanitizer)
+                if output
+                else None,
                 uid=next(ToolUseTracker._uid_seq),
             )
         )
@@ -317,7 +388,9 @@ class ToolUseTracker:
                     "error": s.error,
                     "icon": desc["icon"] if desc else "setting-inter_outlined",
                     "elapsed_ms": s.elapsed_ms,
-                    "result_block": None if (desc and desc.get("no_result")) else s.result_block,
+                    "result_block": None
+                    if (desc and desc.get("no_result"))
+                    else s.result_block,
                     "error_block": s.error_block,
                     # v1.8.3: stable identity for the panel fragment cache.
                     "uid": s.uid,

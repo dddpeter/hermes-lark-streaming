@@ -17,10 +17,13 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger("hermes_lark_streaming")
 
+
 def _get_hermes_config_path() -> Path:
     """动态获取 Hermes 配置文件路径."""
     from ..config.reader import _get_hermes_config_path as _get_path
+
     return _get_path()
+
 
 _PLUGIN_NAME = "hermes-lark-streaming"
 
@@ -53,11 +56,13 @@ _prewarm_tasks: set = set()
 # 只对手工管理依赖的环境报警。
 _LARK_OAPI_MIN = (1, 6, 4)
 
+
 def _parse_version(v: str) -> tuple[int, ...]:
     try:
         return tuple(int(p) for p in str(v).split(".")[:3])
     except (ValueError, TypeError):
         return ()
+
 
 def _check_lark_oapi_floor() -> None:
     """v1.8.0 (P1-1): 启动时检测 lark-oapi 版本，低于门槛立即在日志里留下指纹.
@@ -66,6 +71,7 @@ def _check_lark_oapi_floor() -> None:
     必然 WS 断连 → ERROR；其余组合 → WARNING（低于门槛但暂不会断）。
     """
     import importlib.metadata as _md
+
     try:
         installed = _md.version("lark-oapi")
     except Exception:
@@ -82,7 +88,11 @@ def _check_lark_oapi_floor() -> None:
         hermes_ver = _md.version("hermes-agent")
     except Exception:
         pass
-    breaks_ws = bool(_parse_version(hermes_ver)) and _parse_version(hermes_ver) >= (0, 19, 0)
+    breaks_ws = bool(_parse_version(hermes_ver)) and _parse_version(hermes_ver) >= (
+        0,
+        19,
+        0,
+    )
     _logger.log(
         logging.ERROR if breaks_ws else logging.WARNING,
         "hermes-lark-streaming: lark-oapi %s 低于要求的 >=1.6.4（当前 "
@@ -92,6 +102,7 @@ def _check_lark_oapi_floor() -> None:
         installed,
         hermes_ver or "unknown",
     )
+
 
 def _backup_config() -> None:
     """Back up config.yaml once per install (skips if a backup already exists)."""
@@ -116,6 +127,7 @@ def _backup_config() -> None:
     except Exception:
         _logger.exception("Failed to back up config.yaml to %s", backup_path)
 
+
 def _prepare_config(cfg: dict[str, Any]) -> dict[str, Any]:
     """Recursively pre-process config dict for YAML dump."""
     result: dict[str, Any] = {}
@@ -126,11 +138,14 @@ def _prepare_config(cfg: dict[str, Any]) -> dict[str, Any]:
             result[k] = v
     return result
 
+
 def _ensure_streaming_config() -> None:
     """Ensure ``config.yaml`` has a clean top-level ``hermes_lark_streaming`` section."""
     config_path = _get_hermes_config_path()
     if not config_path.exists():
-        _logger.warning("config.yaml not found at %s, skipping config injection", config_path)
+        _logger.warning(
+            "config.yaml not found at %s, skipping config injection", config_path
+        )
         return
 
     try:
@@ -142,7 +157,9 @@ def _ensure_streaming_config() -> None:
             _backup_config()
             raw["hermes_lark_streaming"] = dict(_DEFAULT_STREAMING_CONFIG)
             changed = True
-            _logger.info("Injected top-level hermes_lark_streaming config into %s", config_path)
+            _logger.info(
+                "Injected top-level hermes_lark_streaming config into %s", config_path
+            )
 
         # NOTE: We intentionally do NOT migrate `show_label` to `footer.show_label` —
         # user may have placed `show_label` at top level for other purposes.
@@ -159,9 +176,18 @@ def _ensure_streaming_config() -> None:
         if changed:
             prepped = _prepare_config(raw)
             with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(prepped, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                yaml.dump(
+                    prepped,
+                    f,
+                    default_flow_style=False,
+                    allow_unicode=True,
+                    sort_keys=False,
+                )
     except Exception:
-        _logger.exception("Failed to ensure hermes_lark_streaming config in config.yaml")
+        _logger.exception(
+            "Failed to ensure hermes_lark_streaming config in config.yaml"
+        )
+
 
 def _cleanup_config() -> None:
     """Remove ``hermes_lark_streaming`` section and ``plugins.enabled`` entry."""
@@ -177,7 +203,9 @@ def _cleanup_config() -> None:
         if "hermes_lark_streaming" in raw:
             del raw["hermes_lark_streaming"]
             changed = True
-            _logger.info("Removed top-level hermes_lark_streaming config from %s", config_path)
+            _logger.info(
+                "Removed top-level hermes_lark_streaming config from %s", config_path
+            )
 
         plugins = raw.get("plugins")
         if isinstance(plugins, dict):
@@ -189,9 +217,18 @@ def _cleanup_config() -> None:
 
         if changed:
             with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(raw, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                yaml.dump(
+                    raw,
+                    f,
+                    default_flow_style=False,
+                    allow_unicode=True,
+                    sort_keys=False,
+                )
     except Exception:
-        _logger.exception("Failed to clean up hermes_lark_streaming config / plugins.enabled")
+        _logger.exception(
+            "Failed to clean up hermes_lark_streaming config / plugins.enabled"
+        )
+
 
 def register(ctx: "PluginContext") -> None:
     """Register hermes-lark-streaming as a Hermes plugin (applies runtime patches)."""
@@ -206,6 +243,7 @@ def register(ctx: "PluginContext") -> None:
 
     try:
         from ..config import Config
+
         _diag_cfg = Config()
         _logger.info(
             "hermes-lark-streaming v%s: config diagnostic — "
@@ -234,9 +272,14 @@ def register(ctx: "PluginContext") -> None:
         from ..patching import apply_patches
 
         apply_patches()
-        _logger.info("hermes-lark-streaming v%s: patches applied (check logs for per-module status)", __version__)
+        _logger.info(
+            "hermes-lark-streaming v%s: patches applied (check logs for per-module status)",
+            __version__,
+        )
     except Exception:
-        _logger.exception("hermes-lark-streaming v%s: failed to apply patches", __version__)
+        _logger.exception(
+            "hermes-lark-streaming v%s: failed to apply patches", __version__
+        )
 
     # Pre-warm FeishuClient at registration to skip ~50-100ms latency on first card.
     try:
@@ -249,31 +292,54 @@ def register(ctx: "PluginContext") -> None:
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                _logger.debug("hermes-lark-streaming v%s: no running event loop, skipping pre-warm", __version__)
+                _logger.debug(
+                    "hermes-lark-streaming v%s: no running event loop, skipping pre-warm",
+                    __version__,
+                )
                 loop = None
             if loop is not None and loop.is_running():
                 _prewarm_task = loop.create_task(ctrl._ensure_init())
                 # Hold strong ref to prevent GC (Python docs: save reference to task)
                 _prewarm_tasks.add(_prewarm_task)
                 _prewarm_task.add_done_callback(_prewarm_tasks.discard)
-                _logger.info("hermes-lark-streaming v%s: FeishuClient pre-warm scheduled", __version__)
+                _logger.info(
+                    "hermes-lark-streaming v%s: FeishuClient pre-warm scheduled",
+                    __version__,
+                )
             else:
-                _logger.debug("hermes-lark-streaming v%s: event loop not running, skipping pre-warm", __version__)
+                _logger.debug(
+                    "hermes-lark-streaming v%s: event loop not running, skipping pre-warm",
+                    __version__,
+                )
     except Exception:
-        _logger.debug("hermes-lark-streaming v%s: FeishuClient pre-warm skipped", __version__, exc_info=True)
+        _logger.debug(
+            "hermes-lark-streaming v%s: FeishuClient pre-warm skipped",
+            __version__,
+            exc_info=True,
+        )
 
     try:
         from ..aowen import handle_pre_gateway_dispatch
+
         ctx.register_hook("pre_gateway_dispatch", handle_pre_gateway_dispatch)
-        _logger.info("hermes-lark-streaming v%s: /aowen commands registered (help, status, monitor)", __version__)
+        _logger.info(
+            "hermes-lark-streaming v%s: /aowen commands registered (help, status, monitor)",
+            __version__,
+        )
     except Exception:
-        _logger.debug("hermes-lark-streaming v%s: /aowen hook registration skipped", __version__, exc_info=True)
+        _logger.debug(
+            "hermes-lark-streaming v%s: /aowen hook registration skipped",
+            __version__,
+            exc_info=True,
+        )
+
 
 def unregister(ctx: "PluginContext") -> None:
     """Unregister — clean up injected config and clear sessions."""
     _cleanup_config()
     try:
         from ..controller import get_controller
+
         ctrl = get_controller()
         ctrl._sess_clear()
     except Exception:

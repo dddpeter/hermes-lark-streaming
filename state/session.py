@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger("hermes_lark_streaming")
 
+
 class CardSession:
     """单条消息的卡片会话状态."""
 
@@ -107,10 +108,10 @@ class CardSession:
         self.deferred_background_review_lock = Lock()
 
         # ── State machine enhancements ──
-        self.create_epoch: int = 0          # Incremented on terminal phase entry
-        self._create_epoch_snap: int = 0    # Snapshotted when creation starts
-        self.terminal_reason: str = ""      # Why the session ended
-        self.terminal_source: str = ""      # Which code path triggered terminal
+        self.create_epoch: int = 0  # Incremented on terminal phase entry
+        self._create_epoch_snap: int = 0  # Snapshotted when creation starts
+        self.terminal_reason: str = ""  # Why the session ended
+        self.terminal_source: str = ""  # Which code path triggered terminal
 
         self.guard = UnavailableGuard(
             reply_to_message_id=message_id,
@@ -144,14 +145,20 @@ class CardSession:
         if not is_legal_transition(from_phase, to):
             _logger.warning(
                 "phase transition rejected: %s → %s (source=%s msg=%s)",
-                from_phase, to, source, (self.message_id or "?")[:12],
+                from_phase,
+                to,
+                source,
+                (self.message_id or "?")[:12],
             )
             return False
 
         self.state = to
         _logger.info(
             "phase transition: %s → %s (source=%s msg=%s)",
-            from_phase, to, source, (self.message_id or "?")[:12],
+            from_phase,
+            to,
+            source,
+            (self.message_id or "?")[:12],
         )
 
         # Track terminal metadata

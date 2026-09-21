@@ -81,7 +81,9 @@ class TestBuildClarifyCardWithChoices:
             choices=["Alpha", "Beta"],
             clarify_id="id4",
         )
-        select_el = next(e for e in card["body"]["elements"] if e.get("tag") == "select_static")
+        select_el = next(
+            e for e in card["body"]["elements"] if e.get("tag") == "select_static"
+        )
         options = select_el["options"]
         # Should have 2 predefined options, NO "other" option
         assert len(options) == 2
@@ -99,7 +101,9 @@ class TestBuildClarifyCardWithChoices:
             choices=["First", "Second"],
             clarify_id="id_labels",
         )
-        select_el = next(e for e in card["body"]["elements"] if e.get("tag") == "select_static")
+        select_el = next(
+            e for e in card["body"]["elements"] if e.get("tag") == "select_static"
+        )
         options = select_el["options"]
         assert "A. First" in options[0]["text"]["content"]
         assert "B. Second" in options[1]["text"]["content"]
@@ -110,7 +114,9 @@ class TestBuildClarifyCardWithChoices:
             choices=["X"],
             clarify_id="id5",
         )
-        select_el = next(e for e in card["body"]["elements"] if e.get("tag") == "select_static")
+        select_el = next(
+            e for e in card["body"]["elements"] if e.get("tag") == "select_static"
+        )
         behaviors = select_el["behaviors"]
         assert len(behaviors) == 1
         assert behaviors[0]["type"] == "callback"
@@ -167,7 +173,9 @@ class TestBuildClarifyCardWithoutChoices:
             choices=None,
             clarify_id="id_open2",
         )
-        select_els = [e for e in card["body"]["elements"] if e.get("tag") == "select_static"]
+        select_els = [
+            e for e in card["body"]["elements"] if e.get("tag") == "select_static"
+        ]
         assert len(select_els) == 0
 
     def test_no_markdown_list_when_no_choices(self) -> None:
@@ -208,7 +216,9 @@ class TestBuildClarifyCardWithoutChoices:
             choices=[],
             clarify_id="id_open6",
         )
-        select_els = [e for e in card["body"]["elements"] if e.get("tag") == "select_static"]
+        select_els = [
+            e for e in card["body"]["elements"] if e.get("tag") == "select_static"
+        ]
         assert len(select_els) == 0
         input_els = [e for e in card["body"]["elements"] if e.get("tag") == "input"]
         assert len(input_els) == 1
@@ -221,12 +231,16 @@ class TestBuildClarifySubmittedCard:
     """Test build_clarify_submitted_card."""
 
     def test_schema_2(self) -> None:
-        card = build_clarify_submitted_card(question="Q", selected="A", clarify_id="cid")
+        card = build_clarify_submitted_card(
+            question="Q", selected="A", clarify_id="cid"
+        )
         assert card["schema"] == "2.0"
         assert card["config"]["streaming_mode"] is False
 
     def test_question_displayed_with_lock_icon(self) -> None:
-        card = build_clarify_submitted_card(question="Which way?", selected="Fast", clarify_id="cid")
+        card = build_clarify_submitted_card(
+            question="Which way?", selected="Fast", clarify_id="cid"
+        )
         elements = card["body"]["elements"]
         assert elements[0]["tag"] == "div"
         assert elements[0]["icon"]["tag"] == "standard_icon"
@@ -234,7 +248,9 @@ class TestBuildClarifySubmittedCard:
         assert "Which way?" in elements[0]["text"]["content"]
 
     def test_selected_shown_with_lock_icon(self) -> None:
-        card = build_clarify_submitted_card(question="Q", selected="Fast", clarify_id="cid")
+        card = build_clarify_submitted_card(
+            question="Q", selected="Fast", clarify_id="cid"
+        )
         elements = card["body"]["elements"]
         assert elements[1]["tag"] == "div"
         assert elements[1]["icon"]["tag"] == "standard_icon"
@@ -242,14 +258,18 @@ class TestBuildClarifySubmittedCard:
         assert "Fast" in elements[1]["text"]["content"]
 
     def test_submitted_hint_present(self) -> None:
-        card = build_clarify_submitted_card(question="Q", selected="A", clarify_id="cid")
+        card = build_clarify_submitted_card(
+            question="Q", selected="A", clarify_id="cid"
+        )
         elements = card["body"]["elements"]
         # Third element: submitted hint
         assert elements[2]["tag"] == "div"
         assert "i18n_content" in elements[2]["text"]
 
     def test_retry_button_present(self) -> None:
-        card = build_clarify_submitted_card(question="Q", selected="A", clarify_id="cid_retry")
+        card = build_clarify_submitted_card(
+            question="Q", selected="A", clarify_id="cid_retry"
+        )
         elements = card["body"]["elements"]
         # v1.7.0 (E2E T8b→A3): the "action" container is REMOVED in Card 2.0
         # (230099/200861 unsupported tag action) — the retry button is now a
@@ -261,12 +281,16 @@ class TestBuildClarifySubmittedCard:
         assert behaviors[0]["value"]["clarify_id"] == "cid_retry"
 
     def test_i18n_on_selected_label(self) -> None:
-        card = build_clarify_submitted_card(question="Q", selected="Fast", clarify_id="cid")
+        card = build_clarify_submitted_card(
+            question="Q", selected="Fast", clarify_id="cid"
+        )
         elements = card["body"]["elements"]
         assert "i18n_content" in elements[1]["text"]
 
     def test_locales_in_config(self) -> None:
-        card = build_clarify_submitted_card(question="Q", selected="A", clarify_id="cid")
+        card = build_clarify_submitted_card(
+            question="Q", selected="A", clarify_id="cid"
+        )
         assert "locales" in card["config"]
 
 
@@ -323,12 +347,15 @@ class TestWrapFeishuAdapterSendClarify:
 
     def test_wrapper_is_callable(self) -> None:
         from hermes_lark_streaming.patching import _wrap_feishu_adapter_send_clarify
+
         assert callable(_wrap_feishu_adapter_send_clarify)
 
     def test_wrapper_returns_callable(self) -> None:
         from hermes_lark_streaming.patching import _wrap_feishu_adapter_send_clarify
+
         async def orig(*args, **kwargs):
             pass
+
         wrapped = _wrap_feishu_adapter_send_clarify(orig)
         assert callable(wrapped)
 
@@ -342,12 +369,19 @@ class TestWrapFeishuAdapterSendClarify:
         mock_ctrl = MagicMock()
         mock_ctrl.enabled = False
 
-        with patch("hermes_lark_streaming.controller.get_controller", return_value=mock_ctrl):
+        with patch(
+            "hermes_lark_streaming.controller.get_controller", return_value=mock_ctrl
+        ):
             import asyncio
+
             asyncio.get_event_loop().run_until_complete(
                 wrapped(
-                    MagicMock(), "chat_123", "Question?", ["A", "B"],
-                    "clarify_1", "session_key_1",
+                    MagicMock(),
+                    "chat_123",
+                    "Question?",
+                    ["A", "B"],
+                    "clarify_1",
+                    "session_key_1",
                 )
             )
 
@@ -377,15 +411,23 @@ class TestWrapFeishuAdapterSendClarify:
         _clarify_questions.pop("test_clarify_id", None)
 
         with (
-            patch("hermes_lark_streaming.controller.get_controller", return_value=mock_ctrl),
+            patch(
+                "hermes_lark_streaming.controller.get_controller",
+                return_value=mock_ctrl,
+            ),
             patch("hermes_lark_streaming.patching._register_gateway_card"),
         ):
             import asyncio
+
             try:
                 asyncio.get_event_loop().run_until_complete(
                     wrapped(
-                        MagicMock(), "chat_123", "Which?", ["Fast", "Slow"],
-                        "test_clarify_id", "session_1",
+                        MagicMock(),
+                        "chat_123",
+                        "Which?",
+                        ["Fast", "Slow"],
+                        "test_clarify_id",
+                        "session_1",
                     )
                 )
             except Exception:
@@ -423,6 +465,7 @@ class TestWrapHandleCardActionEventV142:
 
     def test_wrapper_is_callable(self) -> None:
         from hermes_lark_streaming.patching import _wrap_handle_card_action_event
+
         assert callable(_wrap_handle_card_action_event)
 
     @pytest.mark.asyncio
@@ -480,6 +523,7 @@ class TestWrapHandleCardActionEventV142:
             _clarify_questions,
             _wrap_handle_card_action_event,
         )
+
         _clarify_questions["v142_cid"] = "Q?"
         _clarify_choices["v142_cid"] = ["A", "B"]
         try:
@@ -487,7 +531,10 @@ class TestWrapHandleCardActionEventV142:
             wrapped = _wrap_handle_card_action_event(original)
 
             mock_action = MagicMock()
-            mock_action.value = {"hermes_clarify_action": "select", "clarify_id": "v142_cid"}
+            mock_action.value = {
+                "hermes_clarify_action": "select",
+                "clarify_id": "v142_cid",
+            }
             mock_action.option = "0"
 
             mock_event = MagicMock()
@@ -505,10 +552,13 @@ class TestWrapHandleCardActionEventV142:
             mock_cg = MagicMock()
             mock_cg.resolve_gateway_clarify = MagicMock()
 
-            with patch.dict("sys.modules", {
-                "tools": MagicMock(),
-                "tools.clarify_gateway": mock_cg,
-            }):
+            with patch.dict(
+                "sys.modules",
+                {
+                    "tools": MagicMock(),
+                    "tools.clarify_gateway": mock_cg,
+                },
+            ):
                 await wrapped(mock_adapter, mock_data)
 
             # original (native _handle_card_action_event) must NOT be called —
@@ -521,7 +571,9 @@ class TestWrapHandleCardActionEventV142:
             _clarify_choices.pop("v142_cid", None)
 
     @pytest.mark.asyncio
-    async def test_clarify_action_exception_does_not_fall_through_to_native(self) -> None:
+    async def test_clarify_action_exception_does_not_fall_through_to_native(
+        self,
+    ) -> None:
         """v1.4.2: clarify handler 抛异常时也不放行给原生 (不生成 /card)."""
         from hermes_lark_streaming.patching import _wrap_handle_card_action_event
 
@@ -546,10 +598,13 @@ class TestWrapHandleCardActionEventV142:
 
         # _handle_clarify_card_action will be called; it may succeed or fail.
         # Either way, original (native) must NOT be called.
-        with patch.dict("sys.modules", {
-            "tools": MagicMock(),
-            "tools.clarify_gateway": MagicMock(),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "tools": MagicMock(),
+                "tools.clarify_gateway": MagicMock(),
+            },
+        ):
             await wrapped(mock_adapter, mock_data)
 
         original.assert_not_called()
@@ -564,7 +619,9 @@ class TestStaleBoundMethodSimulation:
     """
 
     @pytest.mark.asyncio
-    async def test_stale_on_card_action_trigger_calls_patched_handle_event(self) -> None:
+    async def test_stale_on_card_action_trigger_calls_patched_handle_event(
+        self,
+    ) -> None:
         """Simulate: SDK holds stale _on_card_action_trigger (unpatched), but
         _handle_card_action_event is patched on the class. The stale method's
         body does self._handle_card_action_event(data) → hits the patch."""
@@ -573,6 +630,7 @@ class TestStaleBoundMethodSimulation:
             _clarify_questions,
             _wrap_handle_card_action_event,
         )
+
         _clarify_questions["stale_cid"] = "Q?"
         _clarify_choices["stale_cid"] = ["X", "Y"]
         try:
@@ -586,7 +644,9 @@ class TestStaleBoundMethodSimulation:
                 def __init__(self):
                     self._loop = None
                     self._loop_accepts_callbacks = lambda loop: True
-                    self._submit_on_loop = lambda loop, coro: asyncio.ensure_future(coro)
+                    self._submit_on_loop = lambda loop, coro: asyncio.ensure_future(
+                        coro
+                    )
                     self._is_interactive_operator_authorized = lambda oid: True
 
                 # Simulate hermes core _on_card_action_trigger (the stale bound method).
@@ -596,12 +656,22 @@ class TestStaleBoundMethodSimulation:
                     event = getattr(data, "event", None)
                     action = getattr(event, "action", None)
                     action_value = getattr(action, "value", {}) or {}
-                    hermes_action = action_value.get("hermes_action") if isinstance(action_value, dict) else None
-                    update_prompt = action_value.get("hermes_update_prompt_action") if isinstance(action_value, dict) else None
+                    hermes_action = (
+                        action_value.get("hermes_action")
+                        if isinstance(action_value, dict)
+                        else None
+                    )
+                    update_prompt = (
+                        action_value.get("hermes_update_prompt_action")
+                        if isinstance(action_value, dict)
+                        else None
+                    )
                     if hermes_action or update_prompt:
                         return "approval/update_prompt handled"
                     # THIS is the key line — self. dynamic lookup
-                    self._submit_on_loop(self._loop, self._handle_card_action_event(data))
+                    self._submit_on_loop(
+                        self._loop, self._handle_card_action_event(data)
+                    )
                     return "empty_response"
 
                 # _handle_card_action_event — the NATIVE version (generates /card).
@@ -616,11 +686,16 @@ class TestStaleBoundMethodSimulation:
 
             # NOW patch _handle_card_action_event on the CLASS (simulating plugin patch)
             original_handle = FakeAdapter._handle_card_action_event
-            FakeAdapter._handle_card_action_event = _wrap_handle_card_action_event(original_handle)
+            FakeAdapter._handle_card_action_event = _wrap_handle_card_action_event(
+                original_handle
+            )
 
             # Build a clarify action
             mock_action = MagicMock()
-            mock_action.value = {"hermes_clarify_action": "select", "clarify_id": "stale_cid"}
+            mock_action.value = {
+                "hermes_clarify_action": "select",
+                "clarify_id": "stale_cid",
+            }
             mock_action.option = "0"
 
             mock_event = MagicMock()
@@ -637,10 +712,13 @@ class TestStaleBoundMethodSimulation:
             # SDK dispatches via the STALE bound method (not via class attribute).
             # The stale method's body calls self._handle_card_action_event(data)
             # which should hit the PATCHED version (dynamic lookup via self.).
-            with patch.dict("sys.modules", {
-                "tools": MagicMock(),
-                "tools.clarify_gateway": mock_cg,
-            }):
+            with patch.dict(
+                "sys.modules",
+                {
+                    "tools": MagicMock(),
+                    "tools.clarify_gateway": mock_cg,
+                },
+            ):
                 stale_bound_method(mock_data)
                 # stale_bound_method scheduled a coroutine via _submit_on_loop;
                 # let it execute
@@ -681,7 +759,9 @@ class TestStaleBoundMethodSimulation:
 
         # Patch _handle_card_action_event on the class
         original_handle = FakeAdapter._handle_card_action_event
-        FakeAdapter._handle_card_action_event = _wrap_handle_card_action_event(original_handle)
+        FakeAdapter._handle_card_action_event = _wrap_handle_card_action_event(
+            original_handle
+        )
 
         mock_action = MagicMock()
         mock_action.value = {"unknown_marker": "x"}
@@ -710,18 +790,22 @@ class TestClarifyCardRegistry:
 
     def test_choices_registry_exists(self) -> None:
         from hermes_lark_streaming.patching import _clarify_choices
+
         assert isinstance(_clarify_choices, dict)
 
     def test_questions_registry_exists(self) -> None:
         from hermes_lark_streaming.patching import _clarify_questions
+
         assert isinstance(_clarify_questions, dict)
 
     def test_selections_registry_exists(self) -> None:
         from hermes_lark_streaming.patching import _clarify_selections
+
         assert isinstance(_clarify_selections, dict)
 
     def test_card_msg_ids_registry_exists(self) -> None:
         from hermes_lark_streaming.patching import _clarify_card_msg_ids
+
         assert isinstance(_clarify_card_msg_ids, dict)
 
     def test_choices_cleanup_after_resolve(self) -> None:
@@ -763,8 +847,11 @@ class TestClarifyI18n:
     def test_all_entries_are_tuples_of_two(self) -> None:
         clarify_keys = [
             "clarify_select_placeholder",
-            "clarify_input_placeholder", "clarify_selected",
-            "clarify_submitted", "clarify_retry", "clarify_confirmed",
+            "clarify_input_placeholder",
+            "clarify_selected",
+            "clarify_submitted",
+            "clarify_retry",
+            "clarify_confirmed",
         ]
         for key in clarify_keys:
             assert key in _T, f"Missing i18n key: {key}"
@@ -1319,8 +1406,8 @@ class TestClarifyQuestionEscaping:
         # Should NOT contain UNescaped {' (the bug trigger).
         # The escaped form \{' is safe (Feishu treats \{ as literal).
         # Check by removing all \{ occurrences and verifying no { remains.
-        unescaped = content.replace('\\{', '').replace('\\}', '')
-        assert '{' not in unescaped
+        unescaped = content.replace("\\{", "").replace("\\}", "")
+        assert "{" not in unescaped
 
     def test_question_brackets_escaped_in_clarify_card(self) -> None:
         """Square brackets in question are escaped."""
@@ -1354,8 +1441,8 @@ class TestClarifyQuestionEscaping:
         )
         content = card["body"]["elements"][0]["text"]["content"]
         assert "\\{" in content
-        unescaped = content.replace('\\{', '').replace('\\}', '')
-        assert '{' not in unescaped
+        unescaped = content.replace("\\{", "").replace("\\}", "")
+        assert "{" not in unescaped
 
     def test_question_curly_braces_escaped_in_confirmed_card(self) -> None:
         """Curly braces in question are escaped in build_clarify_confirmed_card."""
@@ -1365,5 +1452,5 @@ class TestClarifyQuestionEscaping:
         )
         content = card["body"]["elements"][0]["text"]["content"]
         assert "\\{" in content
-        unescaped = content.replace('\\{', '').replace('\\}', '')
-        assert '{' not in unescaped
+        unescaped = content.replace("\\{", "").replace("\\}", "")
+        assert "{" not in unescaped

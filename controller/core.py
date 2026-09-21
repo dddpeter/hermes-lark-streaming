@@ -107,7 +107,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
     @property
     def enabled(self) -> bool:
-        return self._cfg.enabled and bool(self._cfg.feishu_app_id or self._cfg.env_app_id)
+        return self._cfg.enabled and bool(
+            self._cfg.feishu_app_id or self._cfg.env_app_id
+        )
 
     async def _ensure_init(self) -> None:
         if self._initialized:
@@ -267,7 +269,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         stale_session._continuation_reactivation_count = seq
 
         try:
-            if not stale_session.is_terminal_phase and stale_session.state != COMPLETING:
+            if (
+                not stale_session.is_terminal_phase
+                and stale_session.state != COMPLETING
+            ):
                 stale_session.state = COMPLETING
                 # v1.7.0 (R3-04): bump create_epoch via enter_terminal so the
                 # epoch guards in on_reasoning/on_tool_update/on_answer reject
@@ -335,7 +340,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         self._register_continuation(message_id, new_session.message_id)
         return new_session.message_id
 
-    def _fire_and_forget(self, coro: Coroutine[Any, Any, Any], loop: asyncio.AbstractEventLoop) -> None:
+    def _fire_and_forget(
+        self, coro: Coroutine[Any, Any, Any], loop: asyncio.AbstractEventLoop
+    ) -> None:
         """Schedule a coroutine for background execution without awaiting."""
         # v1.8.3: loop.create_task() schedules via non-threadsafe call_soon —
         # from a non-loop thread the callback is appended WITHOUT the
@@ -378,7 +385,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         if not self.enabled:
             return
         if not message_id:
-            _logger.warning("HLS: on_message_started missing message_id chat=%s", chat_id[:12])
+            _logger.warning(
+                "HLS: on_message_started missing message_id chat=%s", chat_id[:12]
+            )
             return
         if self._sess_get(message_id) is not None:
             return
@@ -426,7 +435,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
         loop = self._get_loop()
         if loop is None:
-            _logger.warning("HLS: no event loop, skipping msg=%s", (message_id or "?")[:12])
+            _logger.warning(
+                "HLS: no event loop, skipping msg=%s", (message_id or "?")[:12]
+            )
             return
 
         # v1.3.4 fix (P0): concurrency seal 可能已通过 on_interrupted 创建了
@@ -435,16 +446,20 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         if existing is not None:
             _logger.info(
                 "HLS: session already created by concurrency seal, reusing msg=%s trace=%s",
-                (message_id or "?")[:12], existing.card_trace_id,
+                (message_id or "?")[:12],
+                existing.card_trace_id,
             )
             if not existing._card_ready.is_set():
                 self._fire_and_forget(self._do_create_linear_card(existing), loop)
             try:
                 from ..aowen import record_card_created, set_active_sessions
+
                 record_card_created()
                 set_active_sessions(self._sess_active_count())
             except Exception:
-                _logger.debug('metrics: record_card_created failed (reuse path)', exc_info=True)
+                _logger.debug(
+                    "metrics: record_card_created failed (reuse path)", exc_info=True
+                )
             return
 
         session = CardSession(message_id, chat_id, loop, thread_id=thread_id)
@@ -464,10 +479,11 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         # v1.1.0: Record metrics
         try:
             from ..aowen import record_card_created, set_active_sessions
+
             record_card_created()
             set_active_sessions(self._sess_active_count())
         except Exception:
-            _logger.debug('metrics: record_card_created failed', exc_info=True)
+            _logger.debug("metrics: record_card_created failed", exc_info=True)
 
         self._fire_and_forget(self._do_create_linear_card(session), loop)
 
@@ -495,13 +511,18 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         # here (concurrent message race), skip to prevent stale writes.
         epoch = session.create_epoch
         if session.is_stale_create(epoch):
-            _logger.debug("on_reasoning: stale epoch, skipping msg=%s", (message_id or "?")[:12])
+            _logger.debug(
+                "on_reasoning: stale epoch, skipping msg=%s", (message_id or "?")[:12]
+            )
             return
 
         # v1.1.0 (Task 1.1+1.2): linear is the only path — session.linear
         # v1.1.1: 真飞书模式下卡片创建可能降级（unified_state=None），加保护
         if session.unified_state is None:
-            _logger.warning("HLS: on_thinking but unified_state is None, skipping msg=%s", (message_id or "?")[:12])
+            _logger.warning(
+                "HLS: on_thinking but unified_state is None, skipping msg=%s",
+                (message_id or "?")[:12],
+            )
             return
         session.unified_state.on_reasoning_delta(text)
         self._schedule_linear_flush(session)
@@ -524,7 +545,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         # Epoch guard: prevent stale writes from previous message's callbacks
         epoch = session.create_epoch
         if session.is_stale_create(epoch):
-            _logger.debug("on_tool_update: stale epoch, skipping msg=%s", (message_id or "?")[:12])
+            _logger.debug(
+                "on_tool_update: stale epoch, skipping msg=%s", (message_id or "?")[:12]
+            )
             return
 
         if status in ("running", "started", "tool.started"):
@@ -538,7 +561,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             )
 
         if session.unified_state is None:
-            _logger.warning("HLS: on_tool_update but unified_state is None, skipping msg=%s", (message_id or "?")[:12])
+            _logger.warning(
+                "HLS: on_tool_update but unified_state is None, skipping msg=%s",
+                (message_id or "?")[:12],
+            )
             return
         is_new_tool = status in ("running", "started", "tool.started")
         session.unified_state.on_tool_event(is_new_tool=is_new_tool)
@@ -569,7 +595,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         # Epoch guard: prevent stale writes from previous message's callbacks
         epoch = session.create_epoch
         if session.is_stale_create(epoch):
-            _logger.debug("on_answer: stale epoch, skipping msg=%s", (message_id or "?")[:12])
+            _logger.debug(
+                "on_answer: stale epoch, skipping msg=%s", (message_id or "?")[:12]
+            )
             return
 
         # ── TTFB: 首字到达时间 ──
@@ -579,7 +607,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         answer_text = strip_reasoning_tags(text)
         if answer_text:
             if session.unified_state is None:
-                _logger.warning("HLS: on_answer but unified_state is None, skipping msg=%s", (message_id or "?")[:12])
+                _logger.warning(
+                    "HLS: on_answer but unified_state is None, skipping msg=%s",
+                    (message_id or "?")[:12],
+                )
                 return
             session.unified_state.on_answer_delta(answer_text)
             self._schedule_linear_flush(session)
@@ -619,9 +650,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         # v1.1.0: Record metrics
         try:
             from ..aowen import record_card_aborted
+
             record_card_aborted()
         except Exception:
-            _logger.debug('metrics: record_card_aborted failed', exc_info=True)
+            _logger.debug("metrics: record_card_aborted failed", exc_info=True)
 
         self._complete_session(session)
 
@@ -654,6 +686,7 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                 if old_session.flush._flush_in_progress:
                     loop = self._get_loop()
                     if loop is not None:
+
                         async def _wait_and_abort():
                             # v1.7.0 (R1-11): this tuple equals plain Exception
                             # (TimeoutError is an Exception subclass). Keep the
@@ -699,6 +732,7 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                                 old_message_id[:12],
                             )
                             self._complete_session(old_session)
+
                         self._fire_and_forget(_wait_and_abort(), loop)
                     else:
                         # No loop — immediate abort (best effort)
@@ -730,8 +764,12 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         if self._sess_get(new_message_id) is None:
             loop = self._get_loop()
             if loop is not None:
-                reply_anchor_id = anchor_id if anchor_id and anchor_id != new_message_id else None
-                session = CardSession(new_message_id, chat_id, loop, thread_id=thread_id)
+                reply_anchor_id = (
+                    anchor_id if anchor_id and anchor_id != new_message_id else None
+                )
+                session = CardSession(
+                    new_message_id, chat_id, loop, thread_id=thread_id
+                )
                 session.anchor_id = reply_anchor_id
                 self._sess_put(new_message_id, session)
                 if reply_anchor_id:
@@ -796,7 +834,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             message_id = cont_id
 
         direct_session = self._sess_get(message_id)
-        if direct_session is not None and direct_session.state in (COMPLETING, COMPLETED):
+        if direct_session is not None and direct_session.state in (
+            COMPLETING,
+            COMPLETED,
+        ):
             _logger.info(
                 "on_completed: idempotent, msg=%s state=%s",
                 (message_id or "?")[:12],
@@ -823,7 +864,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             if redirected_id is not None:
                 # 也检查重定向的 session 是否已在完成中
                 redir_session = self._sess_get(redirected_id)
-                if redir_session is not None and redir_session.state in (COMPLETING, COMPLETED):
+                if redir_session is not None and redir_session.state in (
+                    COMPLETING,
+                    COMPLETED,
+                ):
                     _logger.info(
                         "on_completed: idempotent (redirected), msg=%s -> %s state=%s",
                         (message_id or "?")[:12],
@@ -843,7 +887,11 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
         # 卡片创建失败 → 交回 gateway 正常回复
         if session.state in (CREATION_FAILED, TERMINATED):
-            _logger.info("on_completed: msg=%s state=%s, yielding to gateway", (message_id or "?")[:12], session.state)
+            _logger.info(
+                "on_completed: msg=%s state=%s, yielding to gateway",
+                (message_id or "?")[:12],
+                session.state,
+            )
             self._cleanup(message_id)
             return False
 
@@ -852,11 +900,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
         if answer:
             session.text.on_deliver(answer)
-            if (
-                session.linear
-                and session.unified_state is not None
-            ):
+            if session.linear and session.unified_state is not None:
                 from ..state.text import strip_reasoning_tags
+
                 clean_answer = strip_reasoning_tags(answer)
                 if clean_answer:
                     _existing = session.unified_state.answer_text
@@ -867,24 +913,36 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                         session.unified_state.on_answer_delta(clean_answer)
                         _logger.info(
                             "on_completed: linear answer fallback, len=%d msg=%s",
-                            _clean_len, (message_id or "?")[:12],
+                            _clean_len,
+                            (message_id or "?")[:12],
                         )
-                    elif _clean_len > _existing_len and clean_answer[:_existing_len] == _existing:
+                    elif (
+                        _clean_len > _existing_len
+                        and clean_answer[:_existing_len] == _existing
+                    ):
                         # on_completed answer extends the streamed answer — append diff
                         _diff = clean_answer[_existing_len:]
                         if _diff:
                             session.unified_state.on_answer_delta(_diff)
                             _logger.info(
                                 "on_completed: linear answer extended, existing=%d added=%d msg=%s",
-                                _existing_len, len(_diff), (message_id or "?")[:12],
+                                _existing_len,
+                                len(_diff),
+                                (message_id or "?")[:12],
                             )
-                    elif _clean_len > _existing_len and clean_answer[:_existing_len] != _existing:
+                    elif (
+                        _clean_len > _existing_len
+                        and clean_answer[:_existing_len] != _existing
+                    ):
                         # only a prefix. Replace with the more complete version.
                         _logger.warning(
                             "on_completed: linear answer MISMATCH existing_len=%d clean_len=%d msg=%s "
                             "existing_head=%r clean_head=%r — replacing with on_completed answer",
-                            _existing_len, _clean_len, (message_id or "?")[:12],
-                            _existing[:60], clean_answer[:60],
+                            _existing_len,
+                            _clean_len,
+                            (message_id or "?")[:12],
+                            _existing[:60],
+                            clean_answer[:60],
                         )
                         # v1.8.3: replace_answer_text adds answer-cap enforcement
                         # on top of the v1.7.0 (R2-01) escape-cache reset.
@@ -903,23 +961,40 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             "model": model,
             **({"input_tokens": tokens.get("input_tokens")} if tokens else {}),
             **({"output_tokens": tokens.get("output_tokens")} if tokens else {}),
-            **({"cache_read_tokens": tokens.get("cache_read_tokens")} if tokens and tokens.get("cache_read_tokens") else {}),
-            **({"cache_write_tokens": tokens.get("cache_write_tokens")} if tokens and tokens.get("cache_write_tokens") else {}),
+            **(
+                {"cache_read_tokens": tokens.get("cache_read_tokens")}
+                if tokens and tokens.get("cache_read_tokens")
+                else {}
+            ),
+            **(
+                {"cache_write_tokens": tokens.get("cache_write_tokens")}
+                if tokens and tokens.get("cache_write_tokens")
+                else {}
+            ),
             **({"context_used": context.get("used_tokens")} if context else {}),
             **({"context_max": context.get("max_tokens")} if context else {}),
             **({"api_calls": api_calls} if api_calls else {}),
             **({"history_offset": history_offset} if history_offset else {}),
-            **({"compression_exhausted": compression_exhausted} if compression_exhausted else {}),
+            **(
+                {"compression_exhausted": compression_exhausted}
+                if compression_exhausted
+                else {}
+            ),
             **({"reasoning_tokens": reasoning_tokens} if reasoning_tokens else {}),
-            **({"estimated_cost_usd": estimated_cost_usd} if estimated_cost_usd else {}),
-            **({"cost_status": cost_status} if cost_status and cost_status != "unknown" else {}),
+            **(
+                {"estimated_cost_usd": estimated_cost_usd} if estimated_cost_usd else {}
+            ),
+            **(
+                {"cost_status": cost_status}
+                if cost_status and cost_status != "unknown"
+                else {}
+            ),
         }
 
         session.state = COMPLETING
 
         self._complete_session(session)
         return True
-
 
     def defer_background_review(
         self,
@@ -979,7 +1054,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         # v1.4.0 fix: 清理 _continuation_map 中以本 message_id 为 old 或 new 的条目。
         with self._continuation_map_lock:
             self._continuation_map.pop(message_id, None)
-            stale_cont_keys = [k for k, v in self._continuation_map.items() if v == message_id]
+            stale_cont_keys = [
+                k for k, v in self._continuation_map.items() if v == message_id
+            ]
             for k in stale_cont_keys:
                 del self._continuation_map[k]
         session.flush.mark_completed()
@@ -995,7 +1072,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
     def _complete_session(self, session: CardSession) -> None:
         """根据 session 线性/非线性选择完成路径."""
         if session.linear and session.unified_state:
-            self._fire_and_forget(self._do_linear_complete_with_fallback(session), session._loop)
+            self._fire_and_forget(
+                self._do_linear_complete_with_fallback(session), session._loop
+            )
         else:
             # path so the card still completes (rather than deadlocking).
             _logger.warning(
@@ -1003,7 +1082,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                 "completer (non-linear path removed in v1.1.0), msg=%s",
                 (session.message_id or "?")[:12],
             )
-            self._fire_and_forget(self._do_linear_complete_with_fallback(session), session._loop)
+            self._fire_and_forget(
+                self._do_linear_complete_with_fallback(session), session._loop
+            )
 
     async def _do_linear_complete_with_fallback(self, session: CardSession) -> None:
         """线性模式完成，卡片不可用时回退为文本回复."""
@@ -1028,20 +1109,28 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             )
             await self._send_text_fallback(session, fallback_text=_fallback_text)
 
-    async def _send_text_fallback(self, session: CardSession, *, fallback_text: str = "") -> None:
+    async def _send_text_fallback(
+        self, session: CardSession, *, fallback_text: str = ""
+    ) -> None:
         """卡片不可用时，通过飞书 API 发送文本回复作为兜底."""
         if not self._client:
             return
         try:
             # 优先使用调用方传入的 fallback_text（在 _release_session_data 前快照的）
             # 其次从 session 读取（用于 _do_linear_complete_with_fallback 以外的调用路径）
-            text = fallback_text or session.error_message or (session.text.display_text if session.text else "") or ""
+            text = (
+                fallback_text
+                or session.error_message
+                or (session.text.display_text if session.text else "")
+                or ""
+            )
             if not text.strip():
                 return
             # 限制长度避免过长
             if len(text) > 4000:
                 text = text[:4000] + "..."
             from ..cardkit.md import optimize_markdown_style
+
             content = optimize_markdown_style(text) or text
             reply_id = session.anchor_id or session.message_id
             await self._client.reply_text(reply_id, content)
@@ -1093,7 +1182,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                 # 在生产里以 WARNING 级别刷屏（实测 2 个月 180 条、零一次伴随
                 # 真故障）。降级 debug——真正反常的是下面的"活跃 session 超
                 # TTL"，保留 WARNING。
-                _logger.debug("pruning stale terminal session: msg=%s", (mid or "?")[:20])
+                _logger.debug(
+                    "pruning stale terminal session: msg=%s", (mid or "?")[:20]
+                )
                 self._cleanup(mid)
             else:
                 # 活跃 session 超 TTL 只打日志，不清理（避免 AI 回调丢失）
@@ -1109,6 +1200,7 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         except Exception:
             _logger.warning("background task failed", exc_info=True)
 
+
 _controller: StreamCardController | None = None
 
 # v1.8.3: double-checked locking — two threads racing on the first call
@@ -1116,6 +1208,7 @@ _controller: StreamCardController | None = None
 # session stores). Every other shared structure in this module is already
 # lock-guarded; the singleton accessor was the last unguarded one.
 _controller_init_lock = threading.Lock()
+
 
 def get_controller() -> StreamCardController:
     global _controller

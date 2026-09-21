@@ -45,6 +45,7 @@ class TestExtractNotFoundElementId:
 
     def test_parses_named_element_id(self) -> None:
         from hermes_lark_streaming.feishu import extract_not_found_element_id
+
         e = FeishuAPIError(
             "cardkit_batch_update: code=300315, msg=ErrMsg: not find elementID : context_loading_hint;",
             code=300315,
@@ -53,6 +54,7 @@ class TestExtractNotFoundElementId:
 
     def test_parses_named_panel_id(self) -> None:
         from hermes_lark_streaming.feishu import extract_not_found_element_id
+
         e = FeishuAPIError(
             "cardkit_batch_update: code=300315, msg=ErrMsg: not find elementID : agent_process_panel;",
             code=300315,
@@ -61,12 +63,18 @@ class TestExtractNotFoundElementId:
 
     def test_300313_without_name_returns_none(self) -> None:
         from hermes_lark_streaming.feishu import extract_not_found_element_id
-        e = FeishuAPIError("cardkit_stream_element: code=300313, msg=element not exist", code=300313)
+
+        e = FeishuAPIError(
+            "cardkit_stream_element: code=300313, msg=element not exist", code=300313
+        )
         assert extract_not_found_element_id(e) is None
 
     def test_non_element_error_returns_none(self) -> None:
         from hermes_lark_streaming.feishu import extract_not_found_element_id
-        e = FeishuAPIError("cardkit_batch_update: code=99991400, msg=rate limited", code=99991400)
+
+        e = FeishuAPIError(
+            "cardkit_batch_update: code=99991400, msg=rate limited", code=99991400
+        )
         assert extract_not_found_element_id(e) is None
 
 
@@ -235,7 +243,9 @@ class TestPhase3ElementIdSelfHealingV180:
         )
         assert UNIFIED_PANEL_ELEMENT_ID not in session.existing_elements
         # Panel dirty preserved → the add path retries with content.
-        assert session.unified_state.panel_dirty or session.unified_state.tool_steps_dirty
+        assert (
+            session.unified_state.panel_dirty or session.unified_state.tool_steps_dirty
+        )
 
     @pytest.mark.asyncio
     async def test_phase3_unnamed_element_keeps_v141_behavior(self) -> None:
@@ -279,6 +289,7 @@ class TestRecordInboundV180:
         # Import the package-qualified module — the same instance the
         # plugin code (patching/hooks.py) writes to.
         from hermes_lark_streaming import aowen
+
         return aowen
 
     def test_record_inbound_updates_counter_and_timestamp(self) -> None:
@@ -332,8 +343,12 @@ class TestRecordInboundV180:
         source = SimpleNamespace(
             platform=SimpleNamespace(value="feishu"), thread_id=None
         )
-        event = SimpleNamespace(reply_to_message_id=None, raw_message={"event": {"message": {}}})
-        with patch("hermes_lark_streaming.patching.hooks.get_controller", return_value=ctrl):
+        event = SimpleNamespace(
+            reply_to_message_id=None, raw_message={"event": {"message": {}}}
+        )
+        with patch(
+            "hermes_lark_streaming.patching.hooks.get_controller", return_value=ctrl
+        ):
             on_feishu_normalize(message_id="m_in_1", source=source, event=event)
 
         assert aowen.get_metrics()["inbound_messages"] == before + 1
@@ -353,7 +368,9 @@ class TestRecordInboundV180:
             platform=SimpleNamespace(value="telegram"), thread_id=None
         )
         event = SimpleNamespace(reply_to_message_id=None, raw_message={})
-        with patch("hermes_lark_streaming.patching.hooks.get_controller", return_value=ctrl):
+        with patch(
+            "hermes_lark_streaming.patching.hooks.get_controller", return_value=ctrl
+        ):
             on_feishu_normalize(message_id="m_in_2", source=source, event=event)
 
         assert aowen.get_metrics()["inbound_messages"] == before
@@ -388,6 +405,7 @@ class TestPruningLogLevelV180:
         session = _make_session("msg_prune_ttl", linear=True)
         session.created_at = time.time() - 999999  # way past TTL
         from hermes_lark_streaming.controller.mixin import COMPLETED
+
         session.state = COMPLETED
         ctrl._sessions["msg_prune_ttl"] = session
 
@@ -427,15 +445,18 @@ class TestLifecycleClassificationV180:
     @pytest.mark.parametrize("content", CASES)
     def test_lifecycle_notices(self, content: str) -> None:
         from hermes_lark_streaming.patching.adapter import _classify_gateway_message
+
         assert _classify_gateway_message(content) == "lifecycle"
 
     def test_error_with_warning_emoji_still_error(self) -> None:
         """Regression guard: real errors keep the error classification."""
         from hermes_lark_streaming.patching.adapter import _classify_gateway_message
+
         assert _classify_gateway_message("⚠️ Provider authentication failed") == "error"
 
     def test_plain_still_system(self) -> None:
         from hermes_lark_streaming.patching.adapter import _classify_gateway_message
+
         assert _classify_gateway_message("Just a regular message") == "system"
 
 
@@ -452,8 +473,13 @@ class TestLarkOapiFloorV180:
 
     def _run(self, versions: dict[str, str], caplog) -> None:
         from hermes_lark_streaming.plugin import _check_lark_oapi_floor
-        with patch("importlib.metadata.version", side_effect=lambda name: versions[name]), \
-                caplog.at_level(logging.DEBUG, logger="hermes_lark_streaming"):
+
+        with (
+            patch(
+                "importlib.metadata.version", side_effect=lambda name: versions[name]
+            ),
+            caplog.at_level(logging.DEBUG, logger="hermes_lark_streaming"),
+        ):
             _check_lark_oapi_floor()
 
     def test_below_floor_with_new_hermes_logs_error(self, caplog) -> None:
@@ -477,8 +503,10 @@ class TestLarkOapiFloorV180:
                 return "1.5.1"
             raise Exception("no metadata")
 
-        with patch("importlib.metadata.version", side_effect=_version), \
-                caplog.at_level(logging.DEBUG, logger="hermes_lark_streaming"):
+        with (
+            patch("importlib.metadata.version", side_effect=_version),
+            caplog.at_level(logging.DEBUG, logger="hermes_lark_streaming"),
+        ):
             _check_lark_oapi_floor()
         errors = [r for r in caplog.records if r.levelno == logging.ERROR]
         warns = [r for r in caplog.records if r.levelno == logging.WARNING]
@@ -488,13 +516,11 @@ class TestLarkOapiFloorV180:
     def test_at_floor_is_silent(self, caplog) -> None:
         self._run({"lark-oapi": "1.6.4", "hermes-agent": "0.21.0"}, caplog)
         assert not [
-            r for r in caplog.records
-            if r.levelno in (logging.WARNING, logging.ERROR)
+            r for r in caplog.records if r.levelno in (logging.WARNING, logging.ERROR)
         ]
 
     def test_above_floor_is_silent(self, caplog) -> None:
         self._run({"lark-oapi": "1.7.3", "hermes-agent": "0.21.0"}, caplog)
         assert not [
-            r for r in caplog.records
-            if r.levelno in (logging.WARNING, logging.ERROR)
+            r for r in caplog.records if r.levelno in (logging.WARNING, logging.ERROR)
         ]

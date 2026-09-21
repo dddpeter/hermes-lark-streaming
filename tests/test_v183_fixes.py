@@ -1,20 +1,20 @@
 """v1.8.3 regression tests — hardening fixes from the v1.8.2 code review.
 
-  * Singleton lock: ``get_controller()`` is created under a lock — two
-    threads racing on first call previously produced two controllers
-    (two FeishuClients + split-brain session stores).
-  * _fire_and_forget thread safety: scheduling from a non-loop thread now
-    uses ``run_coroutine_threadsafe``. ``loop.create_task`` internally uses
-    non-threadsafe ``call_soon`` — the callback is appended without writing
-    the self-pipe, so a loop blocked in select() never wakes up and the
-    coroutine silently stalls (FlushController.schedule_update already did
-    this correctly; this aligns the controller with it).
-  * reply_* transient retry: ``reply_card`` / ``reply_card_by_id`` /
-    ``reply_text`` now go through ``_retry_transient`` like the cardkit_*
-    methods. The text fallback path (last-resort delivery when a card seal
-    fails) previously had NO retry — one network blip and the user received
-    nothing. Also: ``_send_text_fallback`` no longer swallows failures
-    silently (`except Exception: pass` → warning log).
+* Singleton lock: ``get_controller()`` is created under a lock — two
+  threads racing on first call previously produced two controllers
+  (two FeishuClients + split-brain session stores).
+* _fire_and_forget thread safety: scheduling from a non-loop thread now
+  uses ``run_coroutine_threadsafe``. ``loop.create_task`` internally uses
+  non-threadsafe ``call_soon`` — the callback is appended without writing
+  the self-pipe, so a loop blocked in select() never wakes up and the
+  coroutine silently stalls (FlushController.schedule_update already did
+  this correctly; this aligns the controller with it).
+* reply_* transient retry: ``reply_card`` / ``reply_card_by_id`` /
+  ``reply_text`` now go through ``_retry_transient`` like the cardkit_*
+  methods. The text fallback path (last-resort delivery when a card seal
+  fails) previously had NO retry — one network blip and the user received
+  nothing. Also: ``_send_text_fallback`` no longer swallows failures
+  silently (`except Exception: pass` → warning log).
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ from tests.test_controller import _make_session, _setup_ctrl
 # ══════════════════════════════════════════════════════════════════════
 # Fix 1 — get_controller() singleton lock
 # ══════════════════════════════════════════════════════════════════════
+
 
 class TestSingletonLock:
     """Two threads racing on the first get_controller() call must yield
@@ -105,6 +106,7 @@ class TestSingletonLock:
 # Fix 2 — _fire_and_forget thread safety
 # ══════════════════════════════════════════════════════════════════════
 
+
 class TestFireAndForgetThreadSafety:
     def test_off_loop_thread_wakes_blocked_loop(self) -> None:
         """Scheduling from a non-loop thread must wake a select()-blocked loop.
@@ -168,6 +170,7 @@ class TestFireAndForgetThreadSafety:
 # Fix 3 — reply_* transient retry + text-fallback failure logging
 # ══════════════════════════════════════════════════════════════════════
 
+
 class _FakeOkResp:
     """Minimal stand-in for an lark SDK response with success()."""
 
@@ -183,7 +186,9 @@ class _FakeOkResp:
 
 
 def _make_client() -> FeishuClient:
-    return FeishuClient(FeishuClientConfig(app_id="cli_test_app", app_secret="test_secret_value"))
+    return FeishuClient(
+        FeishuClientConfig(app_id="cli_test_app", app_secret="test_secret_value")
+    )
 
 
 class TestReplyTransientRetry:
@@ -269,12 +274,12 @@ class TestTextFallbackLogging:
 
         ctrl._client.reply_text.assert_awaited_once()
         failure_logs = [
-            r for r in caplog.records
+            r
+            for r in caplog.records
             if r.levelno >= logging.WARNING and "fallback" in r.getMessage().lower()
         ]
         assert failure_logs, (
-            "text fallback failure produced no WARNING log — "
-            "silent failure remains"
+            "text fallback failure produced no WARNING log — silent failure remains"
         )
 
     async def test_fallback_success_still_quiet(self, caplog) -> None:
@@ -293,6 +298,7 @@ class TestTextFallbackLogging:
 # Fix 7 — panel fragment cache (snapshot finalized rounds / finished steps)
 # ══════════════════════════════════════════════════════════════════
 
+
 class TestPanelFragmentCache:
     """During a reasoning stream every delta sets panel_dirty and rebuilds
     the ENTIRE panel — re-rendering all finalized rounds (regex truncation)
@@ -302,6 +308,7 @@ class TestPanelFragmentCache:
     @staticmethod
     def _round(i: int, text: str = "推理内容" * 10, elapsed: float = 1234.0):
         from hermes_lark_streaming.state.linear import ReasoningRound
+
         r = ReasoningRound(index=i, text=text, start_time=0.0)
         r.elapsed_ms = elapsed
         r.finalized = True
@@ -323,13 +330,21 @@ class TestPanelFragmentCache:
         monkeypatch.setattr(elements, "_truncate_reasoning", spy)
 
         cache: dict = {}
-        rounds = [self._round(1, text="第一轮" * 20), self._round(2, text="第二轮" * 20)]
-        kw = dict(reasoning_rounds=rounds, current_reasoning_text="",
-                  tool_steps=[], show_reasoning=True)
+        rounds = [
+            self._round(1, text="第一轮" * 20),
+            self._round(2, text="第二轮" * 20),
+        ]
+        kw = dict(
+            reasoning_rounds=rounds,
+            current_reasoning_text="",
+            tool_steps=[],
+            show_reasoning=True,
+        )
 
         elements.build_panel_children(fragment_cache=cache, **kw)
         elements.build_panel_children(
-            fragment_cache=cache, **dict(kw, current_reasoning_text="更多思考"))
+            fragment_cache=cache, **dict(kw, current_reasoning_text="更多思考")
+        )
 
         # Each finalized round rendered exactly ONCE across both builds —
         # the second build (new in-progress text) must reuse fragments.
@@ -350,14 +365,24 @@ class TestPanelFragmentCache:
         monkeypatch.setattr(elements, "_build_tool_step_elements", spy)
 
         step = {
-            "uid": 7, "name": "read", "title": "Read (1.2 s)",
-            "status": "success", "detail": "src/app.py",
-            "output": "", "error": "", "icon": "file-link-text_outlined",
-            "result_block": None, "error_block": None,
+            "uid": 7,
+            "name": "read",
+            "title": "Read (1.2 s)",
+            "status": "success",
+            "detail": "src/app.py",
+            "output": "",
+            "error": "",
+            "icon": "file-link-text_outlined",
+            "result_block": None,
+            "error_block": None,
         }
         cache: dict = {}
-        kw = dict(reasoning_rounds=[], current_reasoning_text="",
-                  tool_steps=[step], show_reasoning=True)
+        kw = dict(
+            reasoning_rounds=[],
+            current_reasoning_text="",
+            tool_steps=[step],
+            show_reasoning=True,
+        )
 
         elements.build_panel_children(fragment_cache=cache, **kw)
         elements.build_panel_children(fragment_cache=cache, **kw)
@@ -377,21 +402,33 @@ class TestPanelFragmentCache:
         monkeypatch.setattr(elements, "_build_tool_step_elements", spy)
 
         running = {
-            "uid": 9, "name": "exec", "title": "Run command",
-            "status": "running", "detail": "pytest", "output": "",
-            "error": "", "icon": "setting_outlined",
-            "result_block": None, "error_block": None,
+            "uid": 9,
+            "name": "exec",
+            "title": "Run command",
+            "status": "running",
+            "detail": "pytest",
+            "output": "",
+            "error": "",
+            "icon": "setting_outlined",
+            "result_block": None,
+            "error_block": None,
         }
         done = {**running, "status": "success"}
         cache: dict = {}
-        base = dict(reasoning_rounds=[], current_reasoning_text="",
-                    tool_steps=[running], show_reasoning=True)
+        base = dict(
+            reasoning_rounds=[],
+            current_reasoning_text="",
+            tool_steps=[running],
+            show_reasoning=True,
+        )
 
         elements.build_panel_children(fragment_cache=cache, **base)
         elements.build_panel_children(
-            fragment_cache=cache, **dict(base, tool_steps=[done]))
+            fragment_cache=cache, **dict(base, tool_steps=[done])
+        )
         elements.build_panel_children(
-            fragment_cache=cache, **dict(base, tool_steps=[done]))
+            fragment_cache=cache, **dict(base, tool_steps=[done])
+        )
 
         # running: rendered when scheduled (never cached); final: rendered
         # once, cached; third build: served from cache.
@@ -415,8 +452,12 @@ class TestPanelFragmentCache:
         monkeypatch.setattr(elements, "_truncate_reasoning", spy)
 
         rounds = [self._round(1)]
-        kw = dict(reasoning_rounds=rounds, current_reasoning_text="",
-                  tool_steps=[], show_reasoning=True)
+        kw = dict(
+            reasoning_rounds=rounds,
+            current_reasoning_text="",
+            tool_steps=[],
+            show_reasoning=True,
+        )
 
         elements.build_panel_children(**kw)
         elements.build_panel_children(**kw)
@@ -438,9 +479,9 @@ class TestPanelFragmentCache:
 
         state = UnifiedLinearState()
         state.on_reasoning_delta("第一轮")
-        state.on_answer_delta("答案")          # finalizes round 1
+        state.on_answer_delta("答案")  # finalizes round 1
         state.on_reasoning_delta("第二轮")
-        state.on_answer_delta("答案2")         # finalizes round 2
+        state.on_answer_delta("答案2")  # finalizes round 2
 
         uids = [r.uid for r in state.reasoning_rounds]
         assert uids[0] != 0 and uids[1] != 0, "rounds missing uid"
@@ -474,6 +515,7 @@ class TestUnifiedFlushUsesFragmentCache:
         # via _reload_cached, not _raw) — pre-seed the TTL cache so the panel
         # renders reasoning rounds like real installs with it enabled.
         import time as _time
+
         ctrl._cfg._reload_cache = {"display": {"show_reasoning": True}}
         ctrl._cfg._reload_cache_at = _time.monotonic()
         session = _make_session("msg_frag", linear=True)
@@ -481,7 +523,8 @@ class TestUnifiedFlushUsesFragmentCache:
         session.card_msg_id = "om_frag"
         session._creation_stages = {"answer", "panel", "hint_removed"}
         session.existing_elements = {
-            ANSWER_ELEMENT_ID, UNIFIED_PANEL_ELEMENT_ID,
+            ANSWER_ELEMENT_ID,
+            UNIFIED_PANEL_ELEMENT_ID,
         }
         session.state = STREAMING
         ctrl._sessions["msg_frag"] = session
@@ -523,6 +566,7 @@ class TestUnifiedFlushUsesFragmentCache:
 # Fix 8 — answer_text storage cap
 # ══════════════════════════════════════════════════════════════════
 
+
 class TestAnswerLengthCap:
     """answer_text was the only unbounded text in UnifiedLinearState
     (R2-02 capped rounds/panel_events/bg_review but not the answer).
@@ -531,6 +575,7 @@ class TestAnswerLengthCap:
     @staticmethod
     def _state_with_cap(monkeypatch, cap: int):
         from hermes_lark_streaming.state.linear import UnifiedLinearState
+
         monkeypatch.setattr(UnifiedLinearState, "_MAX_ANSWER_CHARS", cap)
         return UnifiedLinearState()
 
@@ -540,9 +585,9 @@ class TestAnswerLengthCap:
 
         assert len(state.answer_text) <= 100 + 200, "answer not truncated"
         assert state.answer_truncated, "truncation flag not set"
-        assert "截断" in state.answer_text or "truncated" in state.answer_text.lower(), (
-            "no truncation notice visible to the user"
-        )
+        assert (
+            "截断" in state.answer_text or "truncated" in state.answer_text.lower()
+        ), "no truncation notice visible to the user"
 
     def test_further_deltas_ignored_after_truncation(self, monkeypatch) -> None:
         state = self._state_with_cap(monkeypatch, 100)
@@ -560,12 +605,12 @@ class TestAnswerLengthCap:
 
         state = self._state_with_cap(monkeypatch, 200)
         state.on_answer_delta("a*b")
-        state.on_answer_delta("c*d" * 500)   # crosses the cap → truncated
+        state.on_answer_delta("c*d" * 500)  # crosses the cap → truncated
 
         assert state.answer_truncated
-        assert state.escaped_answer_view() == escape_markdown_asterisks(state.answer_text), (
-            "escaped view stale after truncation"
-        )
+        assert state.escaped_answer_view() == escape_markdown_asterisks(
+            state.answer_text
+        ), "escaped view stale after truncation"
 
     def test_normal_answers_untouched(self) -> None:
         from hermes_lark_streaming.state.linear import UnifiedLinearState
@@ -583,5 +628,7 @@ class TestAnswerLengthCap:
 
         assert state.answer_truncated
         assert len(state.answer_text) <= 100 + 200
-        assert state.escaped_answer_view() == escape_markdown_asterisks(state.answer_text)
+        assert state.escaped_answer_view() == escape_markdown_asterisks(
+            state.answer_text
+        )
         assert state.answer_dirty, "replacement must mark dirty"

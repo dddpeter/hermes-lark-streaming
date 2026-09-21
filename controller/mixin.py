@@ -46,6 +46,7 @@ __all__ = [
     "_TERMINAL",
 ]
 
+
 class ControllerMixin:
     """异步卡片 API 操作 — 由 StreamCardController 继承."""
 
@@ -59,7 +60,9 @@ class ControllerMixin:
         # v1.8.0 (P2-2): 与 _wrap_cron_deliver 的合唱日志一起降级——
         # 一次 cron 推送以前打 4 条 INFO（intercepted/ctrl.enabled/此处/
         # delivered）。保留 delivered 一条 INFO 作确认，其余转 debug。
-        _logger.debug("cron _do_cron_deliver: chat=%s content_len=%d", chat_id[:12], len(content))
+        _logger.debug(
+            "cron _do_cron_deliver: chat=%s content_len=%d", chat_id[:12], len(content)
+        )
         await self._ensure_init()
         assert self._client is not None
         card = build_cron_card(content)
@@ -92,7 +95,9 @@ class ControllerMixin:
             )
             return card_msg_id, None  # No card_id for static gateway cards
         except Exception:
-            _logger.warning("gateway card delivery failed, caller should fall back", exc_info=True)
+            _logger.warning(
+                "gateway card delivery failed, caller should fall back", exc_info=True
+            )
             return None, None
 
     async def _do_gateway_card_update(

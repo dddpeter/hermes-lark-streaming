@@ -102,7 +102,9 @@ def build_release_body(tag: str, owner: str, repo: str) -> str:
     不再把 CHANGELOG.md 全部内容塞进 Release body（太长）。
     用户点击链接即可查看完整更新日志。
     """
-    changelog_url = f"https://gitee.com/{owner}/{repo}/raw/github_sync/docs/CHANGELOG.md"
+    changelog_url = (
+        f"https://gitee.com/{owner}/{repo}/raw/github_sync/docs/CHANGELOG.md"
+    )
     return f"完整更新日志：{changelog_url}"
 
 
@@ -196,8 +198,12 @@ def main() -> None:
 
     # 4. 调用 Gitee API 创建 Release（API 会自动创建 tag，无需 git push）
     create_gitee_release(
-        owner=owner, token=token, repo=repo,
-        tag=tag, body=body, target_commitish=target_commitish,
+        owner=owner,
+        token=token,
+        repo=repo,
+        tag=tag,
+        body=body,
+        target_commitish=target_commitish,
     )
 
     print("✅ 发版流水线完成")

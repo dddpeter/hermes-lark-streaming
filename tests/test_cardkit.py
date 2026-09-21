@@ -86,7 +86,9 @@ class TestStripInvalidImageKeys:
         assert "img_v3_test" in _strip_invalid_image_keys("![a](img_v3_test)")
 
     def test_non_img_removed(self) -> None:
-        assert "http://example.com/img.png" not in _strip_invalid_image_keys("![a](http://example.com/img.png)")
+        assert "http://example.com/img.png" not in _strip_invalid_image_keys(
+            "![a](http://example.com/img.png)"
+        )
 
 
 # --- 表格处理 ---
@@ -164,7 +166,12 @@ _STEP_RUNNING = {
     "result_block": None,
     "error_block": None,
 }
-_STEP_SUCCESS = {**_STEP_RUNNING, "status": "success", "output": "ok", "elapsed_ms": 100}
+_STEP_SUCCESS = {
+    **_STEP_RUNNING,
+    "status": "success",
+    "output": "ok",
+    "elapsed_ms": 100,
+}
 
 
 # --- Footer ---
@@ -433,20 +440,34 @@ class TestBuildStreamingCardV2:
     def test_with_unified_panel(self) -> None:
         """With include_unified_panel=True (default), unified panel is present."""
         from hermes_lark_streaming.cardkit import UNIFIED_PANEL_ELEMENT_ID
+
         card = build_streaming_card_v2(tool_steps=[_STEP_RUNNING], elapsed_ms=100)
-        assert any(e.get("element_id") == UNIFIED_PANEL_ELEMENT_ID for e in card["body"]["elements"])
+        assert any(
+            e.get("element_id") == UNIFIED_PANEL_ELEMENT_ID
+            for e in card["body"]["elements"]
+        )
 
     def test_unified_panel_expanded(self) -> None:
         """Unified panel placeholder respects streaming_panel_expanded."""
         from hermes_lark_streaming.cardkit import UNIFIED_PANEL_ELEMENT_ID
+
         card = build_streaming_card_v2(streaming_panel_expanded=True)
-        panel = next(e for e in card["body"]["elements"] if e.get("element_id") == UNIFIED_PANEL_ELEMENT_ID)
+        panel = next(
+            e
+            for e in card["body"]["elements"]
+            if e.get("element_id") == UNIFIED_PANEL_ELEMENT_ID
+        )
         assert panel["expanded"] is True
 
     def test_unified_panel_collapsed(self) -> None:
         from hermes_lark_streaming.cardkit import UNIFIED_PANEL_ELEMENT_ID
+
         card = build_streaming_card_v2(streaming_panel_expanded=False)
-        panel = next(e for e in card["body"]["elements"] if e.get("element_id") == UNIFIED_PANEL_ELEMENT_ID)
+        panel = next(
+            e
+            for e in card["body"]["elements"]
+            if e.get("element_id") == UNIFIED_PANEL_ELEMENT_ID
+        )
         assert panel["expanded"] is False
 
     def test_print_strategy_delay(self) -> None:
@@ -600,7 +621,11 @@ class TestCacheFooterField:
     def test_cache_missing_data_returns_none(self) -> None:
         """缺少 cache_read_tokens 或 input_tokens 时返回 (None, None)."""
         en1, zh1 = _render_footer_field(
-            "cache", {}, is_error=False, is_aborted=False, show_label=False,
+            "cache",
+            {},
+            is_error=False,
+            is_aborted=False,
+            show_label=False,
         )
         assert en1 is None
 
@@ -753,13 +778,13 @@ class TestExtractImagesFromMarkdown:
         assert "After" in cleaned
 
 
-
 class TestBackgroundReviewPanel:
     """后台审查面板测试."""
 
     def test_build_background_review_panel(self) -> None:
         """构建后台审查面板."""
         from hermes_lark_streaming.cardkit import _build_background_review_panel
+
         panel = _build_background_review_panel(["检查完成", "更新记忆"])
         assert panel["tag"] == "collapsible_panel"
         assert len(panel["elements"]) == 2
@@ -767,9 +792,11 @@ class TestBackgroundReviewPanel:
     def test_build_background_review_panel_empty(self) -> None:
         """空消息列表的面板."""
         from hermes_lark_streaming.cardkit import _build_background_review_panel
+
         panel = _build_background_review_panel([])
         assert panel["tag"] == "collapsible_panel"
         assert len(panel["elements"]) == 1  # placeholder
+
 
 class TestLoadingHintElement:
     """_loading_hint_element() 占位元素结构测试."""
@@ -799,7 +826,9 @@ class TestLoadingHintElement:
         """流式占位卡片默认包含占位提示（v1.0.2: 嵌入初始卡片，不再单独API插入）."""
         card = build_streaming_card_v2()
         element_ids = [e.get("element_id") for e in card["body"]["elements"]]
-        assert _LOADING_HINT_ELEMENT_ID in element_ids  # v1.0.2: hint is now pre-embedded
+        assert (
+            _LOADING_HINT_ELEMENT_ID in element_ids
+        )  # v1.0.2: hint is now pre-embedded
 
     def test_streaming_card_without_loading_hint(self) -> None:
         """include_loading_hint=False 时占位卡片不包含占位提示."""
@@ -814,7 +843,8 @@ class TestPreservativeSealActionsDeleteHint:
     def test_partial_seal_deletes_loading_hint(self) -> None:
         actions = build_preservative_seal_actions(partial=True)
         delete_actions = [
-            a for a in actions
+            a
+            for a in actions
             if a["action"] == "delete_elements"
             and a["params"]["element_ids"] == [_LOADING_HINT_ELEMENT_ID]
         ]
@@ -826,7 +856,8 @@ class TestPreservativeSealActionsDeleteHint:
             footer_fields=[["status"]],
         )
         delete_actions = [
-            a for a in actions
+            a
+            for a in actions
             if a["action"] == "delete_elements"
             and a["params"]["element_ids"] == [_LOADING_HINT_ELEMENT_ID]
         ]
@@ -874,7 +905,9 @@ class TestBuildUnifiedPanelTrimming:
 
     def _make_rounds(self, n: int) -> list:
         """Create n reasoning rounds."""
-        rounds = [ReasoningRound(index=i + 1, text=f"Reasoning {i + 1}") for i in range(n)]
+        rounds = [
+            ReasoningRound(index=i + 1, text=f"Reasoning {i + 1}") for i in range(n)
+        ]
         for r in rounds:
             r.elapsed_ms = 100
         return rounds
@@ -882,8 +915,13 @@ class TestBuildUnifiedPanelTrimming:
     def _make_steps(self, n: int) -> list[dict]:
         """Create n tool steps."""
         return [
-            {"name": f"tool_{i}", "status": "success", "title": f"Tool {i}",
-             "detail": f"Detail {i}", "result_block": {"content": f"Result {i}", "language": "text"}}
+            {
+                "name": f"tool_{i}",
+                "status": "success",
+                "title": f"Tool {i}",
+                "detail": f"Detail {i}",
+                "result_block": {"content": f"Result {i}", "language": "text"},
+            }
             for i in range(n)
         ]
 
@@ -966,7 +1004,9 @@ class TestBuildUnifiedPanelTrimming:
         """panel_events are correctly reindexed after trimming."""
         rounds = self._make_rounds(25)
         steps = self._make_steps(25)
-        panel_events = [("reasoning", i) for i in range(25)] + [("tool", i) for i in range(25)]
+        panel_events = [("reasoning", i) for i in range(25)] + [
+            ("tool", i) for i in range(25)
+        ]
         panel = build_unified_panel(
             reasoning_rounds=rounds,
             tool_steps=steps,
@@ -1007,6 +1047,7 @@ class TestBuildUnifiedPanelTrimming:
         from hermes_lark_streaming.cardkit.elements import (
             build_unified_panel as _build_panel,
         )
+
         rounds = self._make_rounds(20)
         steps = self._make_steps(20)
         panel = _build_panel(
@@ -1018,12 +1059,16 @@ class TestBuildUnifiedPanelTrimming:
         )
         card = {
             "schema": "2.0",
-            "body": {"elements": [panel, {"tag": "markdown", "content": "Test answer"}]},
+            "body": {
+                "elements": [panel, {"tag": "markdown", "content": "Test answer"}]
+            },
         }
         result = _enforce_card_element_limit(card)
         total_count = _count_tag_objects(result)
         # Should be at or below 195 (200 - 5 margin)
-        assert total_count <= 195, f"Total element count {total_count} exceeds safety threshold 195"
+        assert total_count <= 195, (
+            f"Total element count {total_count} exceeds safety threshold 195"
+        )
         # Should have a collapse hint in panel children (safety net trimmed items)
         panel = None
         for elem in result.get("body", {}).get("elements", []):
@@ -1040,7 +1085,9 @@ class TestEnforceCardElementLimit:
 
     def _make_rounds(self, n: int) -> list:
         """Create n reasoning rounds."""
-        rounds = [ReasoningRound(index=i + 1, text=f"Reasoning {i + 1}") for i in range(n)]
+        rounds = [
+            ReasoningRound(index=i + 1, text=f"Reasoning {i + 1}") for i in range(n)
+        ]
         for r in rounds:
             r.elapsed_ms = 100
         return rounds
@@ -1048,8 +1095,13 @@ class TestEnforceCardElementLimit:
     def _make_steps(self, n: int) -> list[dict]:
         """Create n tool steps."""
         return [
-            {"name": f"tool_{i}", "status": "success", "title": f"Tool {i}",
-             "detail": f"Detail {i}", "result_block": {"content": f"Result {i}", "language": "text"}}
+            {
+                "name": f"tool_{i}",
+                "status": "success",
+                "title": f"Tool {i}",
+                "detail": f"Detail {i}",
+                "result_block": {"content": f"Result {i}", "language": "text"},
+            }
             for i in range(n)
         ]
 
@@ -1058,6 +1110,7 @@ class TestEnforceCardElementLimit:
         from hermes_lark_streaming.cardkit.elements import (
             build_unified_panel as _build_panel,
         )
+
         panel = _build_panel(
             reasoning_rounds=self._make_rounds(5),
             tool_steps=self._make_steps(5),
@@ -1065,7 +1118,9 @@ class TestEnforceCardElementLimit:
         )
         card = {
             "schema": "2.0",
-            "body": {"elements": [panel, {"tag": "markdown", "content": "Short answer"}]},
+            "body": {
+                "elements": [panel, {"tag": "markdown", "content": "Short answer"}]
+            },
         }
         result = _enforce_card_element_limit(card)
         total = _count_tag_objects(result)
@@ -1086,6 +1141,7 @@ class TestEnforceCardElementLimit:
         from hermes_lark_streaming.cardkit.elements import (
             build_unified_panel as _build_panel,
         )
+
         panel = _build_panel(
             reasoning_rounds=self._make_rounds(25),
             tool_steps=self._make_steps(25),
@@ -1095,12 +1151,14 @@ class TestEnforceCardElementLimit:
         )
         card = {
             "schema": "2.0",
-            "body": {"elements": [
-                panel,
-                {"tag": "markdown", "content": "This answer must not be trimmed"},
-                {"tag": "hr"},
-                {"tag": "markdown", "content": "footer"},
-            ]},
+            "body": {
+                "elements": [
+                    panel,
+                    {"tag": "markdown", "content": "This answer must not be trimmed"},
+                    {"tag": "hr"},
+                    {"tag": "markdown", "content": "footer"},
+                ]
+            },
         }
         result = _enforce_card_element_limit(card)
         total = _count_tag_objects(result)
@@ -1112,10 +1170,14 @@ class TestEnforceCardElementLimit:
             for elem in body_elements
             if elem.get("tag") == "markdown"
         )
-        assert answer_found, "Answer text was trimmed — safety net should only trim panel children"
+        assert answer_found, (
+            "Answer text was trimmed — safety net should only trim panel children"
+        )
         # Footer must still be present
         footer_found = any(elem.get("tag") == "hr" for elem in body_elements)
-        assert footer_found, "Footer was trimmed — safety net should only trim panel children"
+        assert footer_found, (
+            "Footer was trimmed — safety net should only trim panel children"
+        )
 
     def test_enforce_card_element_limit_directly(self):
         """_enforce_card_element_limit trims a card dict directly."""
@@ -1131,7 +1193,12 @@ class TestEnforceCardElementLimit:
             max_reasoning_rounds=25,
             max_tool_steps=25,
         )
-        elements = [panel, {"tag": "markdown", "content": "Test answer"}, {"tag": "hr"}, {"tag": "markdown", "content": "footer"}]
+        elements = [
+            panel,
+            {"tag": "markdown", "content": "Test answer"},
+            {"tag": "hr"},
+            {"tag": "markdown", "content": "footer"},
+        ]
         card = {
             "schema": "2.0",
             "body": {"elements": elements},
@@ -1140,18 +1207,22 @@ class TestEnforceCardElementLimit:
         result = _enforce_card_element_limit(card)
         post_count = _count_tag_objects(result)
         assert post_count <= 195, f"Post-enforce count {post_count} exceeds 195"
-        assert post_count < pre_count, "Element count should have decreased after enforcement"
+        assert post_count < pre_count, (
+            "Element count should have decreased after enforcement"
+        )
 
     def test_enforce_does_nothing_when_under_limit(self):
         """_enforce_card_element_limit is a no-op when under 195."""
         card = {
             "schema": "2.0",
             "config": {"streaming_mode": False},
-            "body": {"elements": [
-                {"tag": "markdown", "content": "Hello"},
-                {"tag": "hr"},
-                {"tag": "markdown", "content": "footer"},
-            ]},
+            "body": {
+                "elements": [
+                    {"tag": "markdown", "content": "Hello"},
+                    {"tag": "hr"},
+                    {"tag": "markdown", "content": "footer"},
+                ]
+            },
         }
         pre_count = _count_tag_objects(card)
         result = _enforce_card_element_limit(card)
@@ -1163,9 +1234,11 @@ class TestEnforceCardElementLimit:
         card = {
             "schema": "2.0",
             "config": {"streaming_mode": False},
-            "body": {"elements": [
-                {"tag": "markdown", "content": "Hello"},
-            ]},
+            "body": {
+                "elements": [
+                    {"tag": "markdown", "content": "Hello"},
+                ]
+            },
         }
         result = _enforce_card_element_limit(card)
         assert result is card  # Unchanged
@@ -1175,17 +1248,23 @@ class TestTechStyleFooterGlyphs:
     """v1.8.1 — emoji + short labels replace wordy status text."""
 
     def test_status_uses_emoji_in_normal_completion(self) -> None:
-        en, zh = _render_footer_field("status", {}, is_error=False, is_aborted=False, show_label=False)
+        en, zh = _render_footer_field(
+            "status", {}, is_error=False, is_aborted=False, show_label=False
+        )
         assert en == "✅ done"
         assert zh == "✅ 完成"
 
     def test_status_uses_emoji_in_error_state(self) -> None:
-        en, zh = _render_footer_field("status", {}, is_error=True, is_aborted=False, show_label=False)
+        en, zh = _render_footer_field(
+            "status", {}, is_error=True, is_aborted=False, show_label=False
+        )
         assert en == "❌ failed"
         assert zh == "❌ 失败"
 
     def test_status_uses_emoji_in_aborted_state(self) -> None:
-        en, zh = _render_footer_field("status", {}, is_error=False, is_aborted=True, show_label=False)
+        en, zh = _render_footer_field(
+            "status", {}, is_error=False, is_aborted=True, show_label=False
+        )
         assert en == "⏹ halted"
         assert zh == "⏹ 已停止"
 
@@ -1220,7 +1299,9 @@ class TestTechStyleToolStepTitle:
     """v1.8.1 — tool step titles use status emoji glyph + drop the icon for terminal states."""
 
     def test_running_keeps_icon_and_adds_emoji_glyph(self) -> None:
-        result = _build_tool_step_title({"status": "running", "title": "search", "icon": "search_outlined"})
+        result = _build_tool_step_title(
+            {"status": "running", "title": "search", "icon": "search_outlined"}
+        )
         content = result["text"]["content"]
         assert "⏳" in content
         assert "search" in content
@@ -1299,7 +1380,9 @@ class TestTechStylePanelHeader:
         r2 = ReasoningRound(index=2, text="b")
         r2.elapsed_ms = 300.0
         tools = [{"title": "x", "status": "success"}]
-        result = build_panel_header(reasoning_rounds=[r1, r2], tool_steps=tools, tool_elapsed_ms=150.0)
+        result = build_panel_header(
+            reasoning_rounds=[r1, r2], tool_steps=tools, tool_elapsed_ms=150.0
+        )
         title = result["title"]["content"]
         assert title.startswith("▶")
         # 4 parts: agent loop | 2 rounds | 1 tools | 0.7s

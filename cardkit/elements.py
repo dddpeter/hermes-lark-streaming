@@ -8,46 +8,47 @@ from typing import TYPE_CHECKING, Any
 from .i18n import _T, _i18n, _t
 
 __all__ = [
-    'STREAMING_ELEMENT_ID',
-    'ANSWER_ELEMENT_ID',
-    'UNIFIED_PANEL_ELEMENT_ID',
-    '_LOADING_ELEMENT_ID',
-    '_LOADING_HINT_ELEMENT_ID',
-    '_LOADING_IMG_KEY',
-    '_IMG_MD_PATTERN',
-    '_extract_images_from_markdown',
-    '_collapsible_panel',
-    '_streaming_element',
-    '_loading_element',
-    '_loading_hint_element',
-    '_build_tool_step_elements',
-    '_build_tool_step_title',
-    '_build_reasoning_round_title',
-    '_build_tool_step_detail',
-    '_build_tool_step_output',
-    '_tool_status_info',
-    '_format_code_block',
-    '_longest_backtick_run',
-    '_escape_md',
-    '_build_error_panel',
-    '_build_background_review_panel',
-    '_build_footer_elements',
-    'build_preservative_seal_actions',
-    '_render_footer_field',
-    '_compact',
-    '_format_elapsed',
-    '_build_unified_panel_placeholder',
-    'build_unified_panel',
-    'build_panel_header',
-    'build_panel_children',
-    '_count_tag_objects',
-    '_is_collapse_hint_child',
+    "STREAMING_ELEMENT_ID",
+    "ANSWER_ELEMENT_ID",
+    "UNIFIED_PANEL_ELEMENT_ID",
+    "_LOADING_ELEMENT_ID",
+    "_LOADING_HINT_ELEMENT_ID",
+    "_LOADING_IMG_KEY",
+    "_IMG_MD_PATTERN",
+    "_extract_images_from_markdown",
+    "_collapsible_panel",
+    "_streaming_element",
+    "_loading_element",
+    "_loading_hint_element",
+    "_build_tool_step_elements",
+    "_build_tool_step_title",
+    "_build_reasoning_round_title",
+    "_build_tool_step_detail",
+    "_build_tool_step_output",
+    "_tool_status_info",
+    "_format_code_block",
+    "_longest_backtick_run",
+    "_escape_md",
+    "_build_error_panel",
+    "_build_background_review_panel",
+    "_build_footer_elements",
+    "build_preservative_seal_actions",
+    "_render_footer_field",
+    "_compact",
+    "_format_elapsed",
+    "_build_unified_panel_placeholder",
+    "build_unified_panel",
+    "build_panel_header",
+    "build_panel_children",
+    "_count_tag_objects",
+    "_is_collapse_hint_child",
 ]
 
 _IMG_MD_PATTERN = re.compile(r"!\[([^\]]*)\]\((img_[^)\s]+)\)")
 _RE_MULTI_NEWLINE = re.compile(r"\n{3,}")
 _RE_BACKTICK_RUN = re.compile(r"`+")
 _RE_MD_SPECIAL = re.compile(r"([`*_{}\[\]<>])")
+
 
 def _extract_images_from_markdown(text: str) -> tuple[str, list[dict]]:
     """提取飞书图片为独立 Card 2.0 img 元素，返回 (清理后的文本, img元素列表)."""
@@ -56,19 +57,22 @@ def _extract_images_from_markdown(text: str) -> tuple[str, list[dict]]:
     def _replace(m: re.Match) -> str:
         alt = m.group(1)
         img_key = m.group(2)
-        images.append({
-            "tag": "img",
-            "img_key": img_key,
-            "scale_type": "fit_horizontal",
-            "alt": {"tag": "plain_text", "content": alt},
-            "corner_radius": "8px",
-            "preview": True,
-        })
+        images.append(
+            {
+                "tag": "img",
+                "img_key": img_key,
+                "scale_type": "fit_horizontal",
+                "alt": {"tag": "plain_text", "content": alt},
+                "corner_radius": "8px",
+                "preview": True,
+            }
+        )
         return ""
 
     cleaned = _IMG_MD_PATTERN.sub(_replace, text)
     cleaned = _RE_MULTI_NEWLINE.sub("\n\n", cleaned).strip()
     return cleaned, images
+
 
 if TYPE_CHECKING:
     pass
@@ -79,6 +83,7 @@ UNIFIED_PANEL_ELEMENT_ID = "agent_process_panel"
 _LOADING_ELEMENT_ID = "loading_icon"
 _LOADING_HINT_ELEMENT_ID = "context_loading_hint"
 _LOADING_IMG_KEY = "img_v3_02vb_496bec09-4b43-4773-ad6b-0cdd103cd2bg"
+
 
 def _count_tag_objects(obj: Any) -> int:
     """Recursively count JSON objects with tag key. Feishu Card 2.0 caps at 200 elements."""
@@ -92,6 +97,7 @@ def _count_tag_objects(obj: Any) -> int:
         for item in obj:
             count += _count_tag_objects(item)
     return count
+
 
 def _collapsible_panel(
     *,
@@ -124,7 +130,10 @@ def _collapsible_panel(
         "elements": elements,
     }
 
-def _streaming_element(content: str = "", *, element_id: str = STREAMING_ELEMENT_ID) -> dict:
+
+def _streaming_element(
+    content: str = "", *, element_id: str = STREAMING_ELEMENT_ID
+) -> dict:
     return {
         "tag": "markdown",
         "content": content,
@@ -133,6 +142,7 @@ def _streaming_element(content: str = "", *, element_id: str = STREAMING_ELEMENT
         "margin": "0px 0px 0px 0px",
         "element_id": element_id,
     }
+
 
 def _loading_element() -> dict:
     """Loading spinner element (div with icon — div natively supports icon, markdown varies)."""
@@ -149,6 +159,7 @@ def _loading_element() -> dict:
         },
         "element_id": _LOADING_ELEMENT_ID,
     }
+
 
 def _loading_hint_element() -> dict:
     """上下文加载占位元素 — 首卡创建后插入，首字即显时删除."""
@@ -167,6 +178,7 @@ def _loading_hint_element() -> dict:
         "element_id": _LOADING_HINT_ELEMENT_ID,
     }
 
+
 def _build_unified_panel_placeholder(*, expanded: bool = False) -> dict:
     """Build empty unified panel placeholder for initial streaming card."""
     en_title, zh_title = _T["agent_process"]
@@ -184,15 +196,21 @@ def _build_unified_panel_placeholder(*, expanded: bool = False) -> dict:
     panel["element_id"] = UNIFIED_PANEL_ELEMENT_ID
     return panel
 
-def build_panel_header(*, reasoning_rounds: list, current_reasoning_text: str = "", tool_steps: list[dict], tool_elapsed_ms: float = 0, show_reasoning: bool = True) -> dict:
+
+def build_panel_header(
+    *,
+    reasoning_rounds: list,
+    current_reasoning_text: str = "",
+    tool_steps: list[dict],
+    tool_elapsed_ms: float = 0,
+    show_reasoning: bool = True,
+) -> dict:
     """Build header dict for unified panel. Title computed from state (rounds/tools/elapsed)."""
     en_title, zh_title = _T["agent_process"]
     en_parts: list[str] = [en_title]
     zh_parts: list[str] = [zh_title]
 
-    has_reasoning = show_reasoning and (
-        reasoning_rounds or current_reasoning_text
-    )
+    has_reasoning = show_reasoning and (reasoning_rounds or current_reasoning_text)
     num_rounds = len(reasoning_rounds) + (1 if current_reasoning_text else 0)
 
     if has_reasoning and num_rounds > 0:
@@ -241,6 +259,7 @@ def build_panel_header(*, reasoning_rounds: list, current_reasoning_text: str = 
         "icon_expanded_angle": -180,
     }
 
+
 _REASONING_DISPLAY_LIMIT = 2000  # 单条推理文本最大显示字数
 
 # v1.8.3: panel fragment cache — rendered elements of IMMUTABLE panel items
@@ -254,11 +273,13 @@ _REASONING_DISPLAY_LIMIT = 2000  # 单条推理文本最大显示字数
 # the streaming cache.
 _FRAGMENT_CACHE_MAX = 512
 
+
 def _put_fragment(cache: dict, key, value: list[dict]) -> None:
     """Insert with simple FIFO eviction — bounded memory for marathon sessions."""
     if len(cache) >= _FRAGMENT_CACHE_MAX:
         cache.pop(next(iter(cache)), None)
     cache[key] = value
+
 
 def _get_or_render_fragment(
     fragment_cache: dict | None,
@@ -274,22 +295,30 @@ def _get_or_render_fragment(
         _put_fragment(fragment_cache, key, frag)
     return frag
 
+
 def _round_fragment(round_) -> list[dict]:
     """Render one finalized reasoning round (title + optional text div)."""
-    els: list[dict] = [_build_reasoning_round_title(
-        round_.index, round_.elapsed_ms, finalized=True,
-    )]
+    els: list[dict] = [
+        _build_reasoning_round_title(
+            round_.index,
+            round_.elapsed_ms,
+            finalized=True,
+        )
+    ]
     if round_.text.strip():
-        els.append({
-            "tag": "div",
-            "margin": "0px 0px 0px 22px",
-            "text": {
-                "tag": "lark_md",
-                "content": _truncate_reasoning(round_.text),
-                "text_size": "notation",
-            },
-        })
+        els.append(
+            {
+                "tag": "div",
+                "margin": "0px 0px 0px 22px",
+                "text": {
+                    "tag": "lark_md",
+                    "content": _truncate_reasoning(round_.text),
+                    "text_size": "notation",
+                },
+            }
+        )
     return els
+
 
 def _is_collapse_hint_child(child: Any) -> bool:
     """Whether a panel child is the collapsed-items hint (bilingual-safe).
@@ -302,9 +331,14 @@ def _is_collapse_hint_child(child: Any) -> bool:
     if not isinstance(child, dict):
         return False
     content = child.get("content", "")
-    if not isinstance(content, str) or not content.startswith("⚡") or len(content) > 80:
+    if (
+        not isinstance(content, str)
+        or not content.startswith("⚡")
+        or len(content) > 80
+    ):
         return False
     return "已折叠" in content or "collapse" in content.lower()
+
 
 def _truncate_reasoning(text: str) -> str:
     """截断过长推理文本至 _REASONING_DISPLAY_LIMIT."""
@@ -313,10 +347,21 @@ def _truncate_reasoning(text: str) -> str:
     # v1.7.0 (R4): suffix was zh-hardcoded ("已截断，共 N 字") — bilingual now.
     en_suffix, zh_suffix = _T["truncated_suffix"]
     suffix = zh_suffix.format(len(text))
-    truncated = text[:_REASONING_DISPLAY_LIMIT - len(suffix)] + suffix
+    truncated = text[: _REASONING_DISPLAY_LIMIT - len(suffix)] + suffix
     return truncated
 
-def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str = "", tool_steps: list[dict], show_reasoning: bool = True, panel_events: list[tuple[str, int]] | None = None, max_tool_steps: int = 20, max_reasoning_rounds: int = 20, fragment_cache: dict | None = None) -> list[dict]:
+
+def build_panel_children(
+    *,
+    reasoning_rounds: list,
+    current_reasoning_text: str = "",
+    tool_steps: list[dict],
+    show_reasoning: bool = True,
+    panel_events: list[tuple[str, int]] | None = None,
+    max_tool_steps: int = 20,
+    max_reasoning_rounds: int = 20,
+    fragment_cache: dict | None = None,
+) -> list[dict]:
     """Build child elements for unified panel body. Renders chronologically (panel_events)
     or sequentially (fallback). Trims to max_* limits (Feishu 200-element cap).
 
@@ -369,50 +414,64 @@ def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str 
             zh_parts.append(zh_t.format(trimmed_tools))
         en_hint = _T["collapse_hint_full"][0].format(", ".join(en_parts))
         zh_hint = _T["collapse_hint_full"][1].format("、".join(zh_parts))
-        children.append({
-            "tag": "markdown",
-            "content": zh_hint,
-            "i18n_content": _i18n(en_hint, zh_hint),
-            "text_size": "notation",
-        })
+        children.append(
+            {
+                "tag": "markdown",
+                "content": zh_hint,
+                "i18n_content": _i18n(en_hint, zh_hint),
+                "text_size": "notation",
+            }
+        )
 
     if panel_events:
         rendered_tools: set[int] = set()
         for kind, idx in panel_events:
             if kind == "reasoning" and show_reasoning and idx < len(reasoning_rounds):
                 round_ = reasoning_rounds[idx]
-                children.extend(_get_or_render_fragment(
-                    fragment_cache,
-                    ("r", round_.uid) if round_.uid else None,
-                    lambda r=round_: _round_fragment(r),
-                ))
+                children.extend(
+                    _get_or_render_fragment(
+                        fragment_cache,
+                        ("r", round_.uid) if round_.uid else None,
+                        lambda r=round_: _round_fragment(r),
+                    )
+                )
             elif kind == "tool" and idx < len(tool_steps):
                 if idx not in rendered_tools:
                     step = tool_steps[idx]
                     uid = step.get("uid") or 0
-                    children.extend(_get_or_render_fragment(
-                        fragment_cache,
-                        ("s", uid) if uid and step.get("status") != "running" else None,
-                        lambda s=step: _build_tool_step_elements(s),
-                    ))
+                    children.extend(
+                        _get_or_render_fragment(
+                            fragment_cache,
+                            ("s", uid)
+                            if uid and step.get("status") != "running"
+                            else None,
+                            lambda s=step: _build_tool_step_elements(s),
+                        )
+                    )
                     rendered_tools.add(idx)
 
         # In-progress reasoning.
         if current_reasoning_text and show_reasoning:
             in_progress_idx = num_rounds  # 1-based
-            children.append(_build_reasoning_round_title(
-                in_progress_idx, 0, finalized=False,
-            ))
+            children.append(
+                _build_reasoning_round_title(
+                    in_progress_idx,
+                    0,
+                    finalized=False,
+                )
+            )
             if current_reasoning_text.strip():
-                children.append({
-                    "tag": "div",
-                    "margin": "0px 0px 0px 22px",
-                    "text": {
-                        "tag": "lark_md",
-                        "content": _truncate_reasoning(current_reasoning_text),
-                        "text_size": "notation",
-                    },
-                })
+                children.append(
+                    {
+                        "tag": "div",
+                        "margin": "0px 0px 0px 22px",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": _truncate_reasoning(current_reasoning_text),
+                            "text_size": "notation",
+                        },
+                    }
+                )
 
         # Remaining tool steps not in panel_events.
         for i, step in enumerate(tool_steps):
@@ -421,49 +480,71 @@ def build_panel_children(*, reasoning_rounds: list, current_reasoning_text: str 
 
     else:
         # No timeline, render sequentially.
-        has_reasoning = show_reasoning and (
-            reasoning_rounds or current_reasoning_text
-        )
+        has_reasoning = show_reasoning and (reasoning_rounds or current_reasoning_text)
         if has_reasoning:
             for round_ in reasoning_rounds:
-                children.extend(_get_or_render_fragment(
-                    fragment_cache,
-                    ("r", round_.uid) if round_.uid else None,
-                    lambda r=round_: _round_fragment(r),
-                ))
+                children.extend(
+                    _get_or_render_fragment(
+                        fragment_cache,
+                        ("r", round_.uid) if round_.uid else None,
+                        lambda r=round_: _round_fragment(r),
+                    )
+                )
 
             # In-progress reasoning.
             if current_reasoning_text:
                 in_progress_idx = num_rounds
-                children.append(_build_reasoning_round_title(
-                    in_progress_idx, 0, finalized=False,
-                ))
+                children.append(
+                    _build_reasoning_round_title(
+                        in_progress_idx,
+                        0,
+                        finalized=False,
+                    )
+                )
                 if current_reasoning_text.strip():
-                    children.append({
-                        "tag": "div",
-                        "margin": "0px 0px 0px 22px",
-                        "text": {
-                            "tag": "lark_md",
-                            "content": _truncate_reasoning(current_reasoning_text),
-                            "text_size": "notation",
-                        },
-                    })
+                    children.append(
+                        {
+                            "tag": "div",
+                            "margin": "0px 0px 0px 22px",
+                            "text": {
+                                "tag": "lark_md",
+                                "content": _truncate_reasoning(current_reasoning_text),
+                                "text_size": "notation",
+                            },
+                        }
+                    )
 
         # Tool steps.
         for step in tool_steps:
             uid = step.get("uid") or 0
-            children.extend(_get_or_render_fragment(
-                fragment_cache,
-                ("s", uid) if uid and step.get("status") != "running" else None,
-                lambda s=step: _build_tool_step_elements(s),
-            ))
+            children.extend(
+                _get_or_render_fragment(
+                    fragment_cache,
+                    ("s", uid) if uid and step.get("status") != "running" else None,
+                    lambda s=step: _build_tool_step_elements(s),
+                )
+            )
 
     if not children:
         children.append({"tag": "markdown", "content": " "})
 
     return children
 
-def build_unified_panel(*, reasoning_rounds: list, current_reasoning_text: str = "", tool_steps: list[dict], tool_elapsed_ms: float = 0, show_reasoning: bool = True, expanded: bool = False, element_id: str | None = None, panel_events: list[tuple[str, int]] | None = None, max_tool_steps: int = 20, max_reasoning_rounds: int = 20, fragment_cache: dict | None = None) -> dict:
+
+def build_unified_panel(
+    *,
+    reasoning_rounds: list,
+    current_reasoning_text: str = "",
+    tool_steps: list[dict],
+    tool_elapsed_ms: float = 0,
+    show_reasoning: bool = True,
+    expanded: bool = False,
+    element_id: str | None = None,
+    panel_events: list[tuple[str, int]] | None = None,
+    max_tool_steps: int = 20,
+    max_reasoning_rounds: int = 20,
+    fragment_cache: dict | None = None,
+) -> dict:
     """Build full unified panel. Thin assembler over build_panel_header/children."""
     header = build_panel_header(
         reasoning_rounds=reasoning_rounds,
@@ -494,6 +575,7 @@ def build_unified_panel(*, reasoning_rounds: list, current_reasoning_text: str =
     panel["element_id"] = element_id or UNIFIED_PANEL_ELEMENT_ID
     return panel
 
+
 def _build_tool_step_elements(step: dict) -> list[dict]:
     elements: list[dict] = [_build_tool_step_title(step)]
     detail = _build_tool_step_detail(step)
@@ -503,6 +585,7 @@ def _build_tool_step_elements(step: dict) -> list[dict]:
     if output:
         elements.append(output)
     return elements
+
 
 def _build_tool_step_title(step: dict) -> dict:
     status = step.get("status", "running")
@@ -521,14 +604,23 @@ def _build_tool_step_title(step: dict) -> dict:
     div: dict = {"tag": "div"}
     if status == "running":
         # running: keep icon (motion cue) + glyph prefix
-        div["icon"] = {"tag": "standard_icon", "token": step.get("icon", "tool_02"), "color": "grey"}
+        div["icon"] = {
+            "tag": "standard_icon",
+            "token": step.get("icon", "tool_02"),
+            "color": "grey",
+        }
     # success/error: drop icon entirely — the glyph + colour carry the meaning.
 
-    content = f"<font color='{status_info['color']}'>{glyph}**{_escape_md(title)}**</font>"
+    content = (
+        f"<font color='{status_info['color']}'>{glyph}**{_escape_md(title)}**</font>"
+    )
     div["text"] = {"tag": "lark_md", "content": content, "text_size": "notation"}
     return div
 
-def _build_reasoning_round_title(round_index: int, elapsed_ms: float, finalized: bool, failed: bool = False) -> dict:
+
+def _build_reasoning_round_title(
+    round_index: int, elapsed_ms: float, finalized: bool, failed: bool = False
+) -> dict:
     """构建推理轮次标题 div. Colors: 进行中 orange-300, 已完成 green, 失败 red."""
     if failed:
         color = "red"
@@ -562,6 +654,7 @@ def _build_reasoning_round_title(round_index: int, elapsed_ms: float, finalized:
         },
     }
 
+
 def _build_tool_step_detail(step: dict) -> dict | None:
     detail = step.get("detail", "").strip()
     if not detail:
@@ -577,6 +670,7 @@ def _build_tool_step_detail(step: dict) -> dict | None:
         },
     }
 
+
 def _build_tool_step_output(step: dict) -> dict | None:
     error_block = step.get("error_block")
     result_block = step.get("result_block")
@@ -586,13 +680,17 @@ def _build_tool_step_output(step: dict) -> dict | None:
         lines.append("**Error**")
         lines.append(
             error_block.get("fenced")
-            or _format_code_block(error_block.get("content", ""), error_block.get("language", "text"))
+            or _format_code_block(
+                error_block.get("content", ""), error_block.get("language", "text")
+            )
         )
     elif result_block:
         lines.append("**Result**")
         lines.append(
             result_block.get("fenced")
-            or _format_code_block(result_block.get("content", ""), result_block.get("language", "json"))
+            or _format_code_block(
+                result_block.get("content", ""), result_block.get("language", "json")
+            )
         )
 
     if not lines:
@@ -608,6 +706,7 @@ def _build_tool_step_output(step: dict) -> dict | None:
         },
     }
 
+
 def _tool_status_info(status: str) -> dict[str, str]:
     return {
         "running": {"label": "", "color": "orange-300"},
@@ -615,19 +714,29 @@ def _tool_status_info(status: str) -> dict[str, str]:
         "error": {"label": "", "color": "red"},
     }.get(status, {"label": "", "color": "grey"})
 
+
 def _format_code_block(content: str, language: str) -> str:
     normalized = content.replace("\r\n", "\n").strip()
     fence = "`" * max(3, _longest_backtick_run(normalized) + 1)
     return f"{fence}{language}\n{normalized}\n{fence}"
 
+
 def _longest_backtick_run(value: str) -> int:
     matches = _RE_BACKTICK_RUN.findall(value)
     return max((len(m) for m in matches), default=0)
 
+
 def _escape_md(value: str) -> str:
     return _RE_MD_SPECIAL.sub(r"\\\1", value.replace("\\", "\\\\"))
 
-def _build_error_panel(error_message: str, *, is_aborted: bool = False, expanded: bool = True, card_trace_id: str = "") -> dict:
+
+def _build_error_panel(
+    error_message: str,
+    *,
+    is_aborted: bool = False,
+    expanded: bool = True,
+    card_trace_id: str = "",
+) -> dict:
     """Build collapsible error/interrupt panel. Error: red border. Interrupt: orange."""
     if is_aborted:
         en_label, zh_label = _T["interrupt_panel"]
@@ -652,13 +761,19 @@ def _build_error_panel(error_message: str, *, is_aborted: bool = False, expanded
         if card_trace_id:
             friendly_en += f"\n\nDebug ID: `{card_trace_id}`"
             friendly_zh += f"\n\n调试 ID: `{card_trace_id}`"
-            friendly_en += "\n\nIf this keeps happening, report the Debug ID to the developer."
+            friendly_en += (
+                "\n\nIf this keeps happening, report the Debug ID to the developer."
+            )
             friendly_zh += "\n\n如果反复出错，请把调试 ID 反馈给开发者。"
 
         tech_detail = error_message.strip() if error_message else ""
         if tech_detail:
-            body_content = f"{friendly_zh}\n\n---\n**技术详情**\n```\n{tech_detail}\n```"
-            body_content_en = f"{friendly_en}\n\n---\n**Technical Details**\n```\n{tech_detail}\n```"
+            body_content = (
+                f"{friendly_zh}\n\n---\n**技术详情**\n```\n{tech_detail}\n```"
+            )
+            body_content_en = (
+                f"{friendly_en}\n\n---\n**Technical Details**\n```\n{tech_detail}\n```"
+            )
             body_i18n = _i18n(body_content_en, body_content)
         else:
             body_content = friendly_zh
@@ -687,15 +802,20 @@ def _build_error_panel(error_message: str, *, is_aborted: bool = False, expanded
     panel["border"]["color"] = border_color
     return panel
 
-def _build_background_review_panel(messages: list[str], *, expanded: bool = True, element_id: str | None = None) -> dict[str, Any]:
+
+def _build_background_review_panel(
+    messages: list[str], *, expanded: bool = True, element_id: str | None = None
+) -> dict[str, Any]:
     """构建后台审查进度面板."""
     en_title, zh_title = _T["bg_review_panel"]
     children: list[dict] = []
     for msg in messages:
-        children.append({
-            "tag": "markdown",
-            "content": msg,
-        })
+        children.append(
+            {
+                "tag": "markdown",
+                "content": msg,
+            }
+        )
     if not messages:
         children.append({"tag": "markdown", "content": " "})
     panel = _collapsible_panel(
@@ -712,6 +832,7 @@ def _build_background_review_panel(messages: list[str], *, expanded: bool = True
     if element_id:
         panel["element_id"] = element_id
     return panel
+
 
 def _build_footer_elements(
     footer_data: dict | None,
@@ -761,7 +882,19 @@ def _build_footer_elements(
         },
     ]
 
-def build_preservative_seal_actions(*, partial: bool = False, footer_data: dict | None = None, is_error: bool = False, is_aborted: bool = False, error_message: str = "", footer_fields: list[list[str]] | None = None, footer_show_label: bool = False, existing_elements: set[str] | None = None, card_trace_id: str = "") -> list[dict]:
+
+def build_preservative_seal_actions(
+    *,
+    partial: bool = False,
+    footer_data: dict | None = None,
+    is_error: bool = False,
+    is_aborted: bool = False,
+    error_message: str = "",
+    footer_fields: list[list[str]] | None = None,
+    footer_show_label: bool = False,
+    existing_elements: set[str] | None = None,
+    card_trace_id: str = "",
+) -> list[dict]:
     """构建保留式封卡 batch_update actions. Inserts error panel + footer via insert_before
     loading_icon, then deletes loading_hint + loading_icon. existing_elements filters deletes."""
     actions: list[dict] = []
@@ -771,32 +904,42 @@ def build_preservative_seal_actions(*, partial: bool = False, footer_data: dict 
 
     # Error/interrupt panel.
     if error_message:
-        actions.append({
-            "action": "add_elements",
-            "params": {
-                "type": "insert_before",
-                "target_element_id": _LOADING_ELEMENT_ID,
-                "elements": [_build_error_panel(
-                    error_message, is_aborted=is_aborted, expanded=True,
-                    card_trace_id=card_trace_id,
-                )],
-            },
-        })
+        actions.append(
+            {
+                "action": "add_elements",
+                "params": {
+                    "type": "insert_before",
+                    "target_element_id": _LOADING_ELEMENT_ID,
+                    "elements": [
+                        _build_error_panel(
+                            error_message,
+                            is_aborted=is_aborted,
+                            expanded=True,
+                            card_trace_id=card_trace_id,
+                        )
+                    ],
+                },
+            }
+        )
 
     # Background review panel.
     bg_review_messages = footer_data.get("bg_review_messages") if footer_data else None
     if bg_review_messages:
-        actions.append({
-            "action": "add_elements",
-            "params": {
-                "type": "insert_before",
-                "target_element_id": _LOADING_ELEMENT_ID,
-                "elements": [_build_background_review_panel(
-                    bg_review_messages,
-                    expanded=True,
-                )],
-            },
-        })
+        actions.append(
+            {
+                "action": "add_elements",
+                "params": {
+                    "type": "insert_before",
+                    "target_element_id": _LOADING_ELEMENT_ID,
+                    "elements": [
+                        _build_background_review_panel(
+                            bg_review_messages,
+                            expanded=True,
+                        )
+                    ],
+                },
+            }
+        )
 
     # Partial indicator or footer.
     if partial:
@@ -809,14 +952,16 @@ def build_preservative_seal_actions(*, partial: bool = False, footer_data: dict 
                 "i18n_content": _i18n(f"▸ {en_text} ↩", f"▸ {zh_text} ↩"),
             },
         ]
-        actions.append({
-            "action": "add_elements",
-            "params": {
-                "type": "insert_before",
-                "target_element_id": _LOADING_ELEMENT_ID,
-                "elements": partial_elements,
-            },
-        })
+        actions.append(
+            {
+                "action": "add_elements",
+                "params": {
+                    "type": "insert_before",
+                    "target_element_id": _LOADING_ELEMENT_ID,
+                    "elements": partial_elements,
+                },
+            }
+        )
     else:
         footer_elements = _build_footer_elements(
             footer_data,
@@ -826,34 +971,41 @@ def build_preservative_seal_actions(*, partial: bool = False, footer_data: dict 
             show_label=footer_show_label,
         )
         if footer_elements:
-            actions.append({
-                "action": "add_elements",
-                "params": {
-                    "type": "insert_before",
-                    "target_element_id": _LOADING_ELEMENT_ID,
-                    "elements": footer_elements,
-                },
-            })
+            actions.append(
+                {
+                    "action": "add_elements",
+                    "params": {
+                        "type": "insert_before",
+                        "target_element_id": _LOADING_ELEMENT_ID,
+                        "elements": footer_elements,
+                    },
+                }
+            )
 
     # Delete loading hint (may remain if sealed before answer arrived).
     if _elem_exists(_LOADING_HINT_ELEMENT_ID):
-        actions.append({
-            "action": "delete_elements",
-            "params": {
-                "element_ids": [_LOADING_HINT_ELEMENT_ID],
-            },
-        })
+        actions.append(
+            {
+                "action": "delete_elements",
+                "params": {
+                    "element_ids": [_LOADING_HINT_ELEMENT_ID],
+                },
+            }
+        )
 
     # Delete loading icon.
     if _elem_exists(_LOADING_ELEMENT_ID):
-        actions.append({
-            "action": "delete_elements",
-            "params": {
-                "element_ids": [_LOADING_ELEMENT_ID],
-            },
-        })
+        actions.append(
+            {
+                "action": "delete_elements",
+                "params": {
+                    "element_ids": [_LOADING_ELEMENT_ID],
+                },
+            }
+        )
 
     return actions
+
 
 def _render_footer_field(
     name: str,
@@ -969,11 +1121,15 @@ def _render_footer_field(
             key = "cost_actual" if cost_status == "actual" else "cost_estimated"
             en_val, zh_val = _T[key]
             if show_label:
-                return f"Cost {en_val.format(val.lstrip('$'))}", f"费用 {zh_val.format(val.lstrip('$'))}"
-            return en_val.format(val.lstrip('$')), zh_val.format(val.lstrip('$'))
+                return (
+                    f"Cost {en_val.format(val.lstrip('$'))}",
+                    f"费用 {zh_val.format(val.lstrip('$'))}",
+                )
+            return en_val.format(val.lstrip("$")), zh_val.format(val.lstrip("$"))
         return None, None
 
     return None, None
+
 
 def _compact(n: int) -> str:
     if n >= 1_000_000:
@@ -983,6 +1139,11 @@ def _compact(n: int) -> str:
         return f"{n / 1_000:.1f}K"
     return str(n)
 
+
 def _format_elapsed(ms: float) -> str:
     seconds = ms / 1000
-    return f"{seconds:.1f}s" if seconds < 60 else f"{int(seconds // 60)}m {int(seconds % 60)}s"
+    return (
+        f"{seconds:.1f}s"
+        if seconds < 60
+        else f"{int(seconds // 60)}m {int(seconds % 60)}s"
+    )

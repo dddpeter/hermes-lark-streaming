@@ -27,6 +27,7 @@ class TestEscapeMarkdownAsterisks:
     @pytest.fixture(autouse=True)
     def _import(self):
         from cardkit.md import escape_markdown_asterisks
+
         self.escape = escape_markdown_asterisks
 
     def test_no_asterisk(self):
@@ -159,23 +160,27 @@ class TestStartedAtNone:
 
     def test_tool_step_default_none(self):
         from hermes_lark_streaming.state.tooluse import ToolStep
+
         step = ToolStep(name="test", status="running")
         assert step.started_at is None
         assert step.elapsed_ms == 0.0
 
     def test_tool_session_default_none(self):
         from hermes_lark_streaming.state.tooluse import ToolSession
+
         session = ToolSession()
         assert session.started_at is None
 
     def test_tracker_elapsed_without_start(self):
         from hermes_lark_streaming.state.tooluse import ToolUseTracker
+
         tracker = ToolUseTracker()
         # No session started — elapsed_ms should be 0.0
         assert tracker.elapsed_ms == 0.0
 
     def test_step_elapsed_with_none_started_at(self):
         from hermes_lark_streaming.state.tooluse import ToolStep
+
         step = ToolStep(name="test", status="running", started_at=None)
         assert step.elapsed_ms == 0.0
 
@@ -189,10 +194,13 @@ class TestEnforceCardElementLimit:
     def test_hint_count_accumulation(self):
         """When trimming happens multiple times, the hint should show cumulative count."""
         from cardkit.cards import _enforce_card_element_limit
+
         # Build a card with many panel children to trigger trimming
         children = []
         for i in range(50):
-            children.append({"tag": "div", "text": {"tag": "lark_md", "content": f"Item {i}"}})
+            children.append(
+                {"tag": "div", "text": {"tag": "lark_md", "content": f"Item {i}"}}
+            )
         card = {
             "body": {
                 "elements": [
@@ -219,7 +227,7 @@ class TestEnforceCardElementLimit:
             idx = hint_text.find("项")
             if idx > 0:
                 _end = idx
-                while _end > 0 and hint_text[_end - 1] == ' ':
+                while _end > 0 and hint_text[_end - 1] == " ":
                     _end -= 1
                 _start = _end
                 while _start > 0 and hint_text[_start - 1].isdigit():
@@ -238,6 +246,7 @@ class TestTruncateReasoning:
     @pytest.fixture(autouse=True)
     def _import(self):
         from cardkit.elements import _REASONING_DISPLAY_LIMIT, _truncate_reasoning
+
         self.truncate = _truncate_reasoning
         self.limit = _REASONING_DISPLAY_LIMIT
 
@@ -264,7 +273,9 @@ class TestTruncateReasoning:
         for length in [2001, 2500, 5000, 10000]:
             text = "x" * length
             result = self.truncate(text)
-            assert len(result) <= self.limit, f"length={length}, result_len={len(result)}"
+            assert len(result) <= self.limit, (
+                f"length={length}, result_len={len(result)}"
+            )
 
 
 # ── P1-05: Clarify label >26 ──
@@ -275,6 +286,7 @@ class TestClarifyLabelOverflow:
 
     def test_under_26_uses_letters(self):
         from cardkit.special import build_clarify_card
+
         # 5 choices — should use A-E
         card = build_clarify_card(question="Q", choices=["A", "B", "C", "D", "E"])
         # Just ensure no special chars like [ \ ] in labels
@@ -285,6 +297,7 @@ class TestClarifyLabelOverflow:
 
     def test_over_26_uses_numbers(self):
         from cardkit.special import build_clarify_card
+
         # 30 choices — labels after Z should be numbers
         choices = [f"Choice {i}" for i in range(30)]
         card = build_clarify_card(question="Q", choices=choices)
@@ -301,6 +314,7 @@ class TestMetricsLockThreadSafety:
 
     def test_concurrent_increments(self):
         from aowen import _do_reset, get_metrics, record_card_created
+
         _do_reset()
         errors = []
 
@@ -330,6 +344,7 @@ class TestUnavailableCacheLockThreadSafety:
 
     def test_concurrent_mark_and_check(self):
         from feishu.guard import is_unavailable, mark_unavailable
+
         errors = []
 
         def mark_many():
@@ -346,8 +361,10 @@ class TestUnavailableCacheLockThreadSafety:
             except Exception as e:
                 errors.append(e)
 
-        threads = [threading.Thread(target=mark_many),
-                   threading.Thread(target=check_many)]
+        threads = [
+            threading.Thread(target=mark_many),
+            threading.Thread(target=check_many),
+        ]
         for t in threads:
             t.start()
         for t in threads:
@@ -368,18 +385,18 @@ class TestCounterPattern:
 
         a = FakeAdapter()
         # First increment
-        a._hls_bg_sending = getattr(a, '_hls_bg_sending', 0) + 1
+        a._hls_bg_sending = getattr(a, "_hls_bg_sending", 0) + 1
         assert a._hls_bg_sending == 1
         # Second increment (concurrent task)
-        a._hls_bg_sending = getattr(a, '_hls_bg_sending', 0) + 1
+        a._hls_bg_sending = getattr(a, "_hls_bg_sending", 0) + 1
         assert a._hls_bg_sending == 2
         # First decrement
-        a._hls_bg_sending = getattr(a, '_hls_bg_sending', 1) - 1
+        a._hls_bg_sending = getattr(a, "_hls_bg_sending", 1) - 1
         assert a._hls_bg_sending == 1
         # Still positive — guard should see True
         assert a._hls_bg_sending  # > 0 means truthy
         # Second decrement
-        a._hls_bg_sending = getattr(a, '_hls_bg_sending', 1) - 1
+        a._hls_bg_sending = getattr(a, "_hls_bg_sending", 1) - 1
         assert a._hls_bg_sending == 0
         # Zero — guard should see False
         assert not a._hls_bg_sending
@@ -389,13 +406,14 @@ class TestCounterPattern:
             pass
 
         a = FakeAdapter()
-        a._hls_cron_sending = getattr(a, '_hls_cron_sending', 0) + 1
+        a._hls_cron_sending = getattr(a, "_hls_cron_sending", 0) + 1
         assert a._hls_cron_sending == 1
-        a._hls_cron_sending = getattr(a, '_hls_cron_sending', 1) - 1
+        a._hls_cron_sending = getattr(a, "_hls_cron_sending", 1) - 1
         assert a._hls_cron_sending == 0
 
     def test_guard_reads_counter(self):
         """Guard should treat counter > 0 as True, 0 as False."""
+
         class FakeAdapter:
             pass
 
@@ -437,6 +455,7 @@ class TestYAMLErrorHandling:
 
 # ─── v1.3.4 Regression Tests ──────────────────────────────────────────
 
+
 def test_v134_aowen_handler_exception_returns_skip_not_none():
     """v1.3.4 P0 fix: /aowen handler 异常时必须返回 skip，不能返回 None。
 
@@ -459,8 +478,11 @@ def test_v134_aowen_handler_exception_returns_skip_not_none():
 
     # 让 _send_card_async 抛异常（模拟 controller 未初始化等场景）
     import aowen
+
     original_send = aowen._send_card_async
-    aowen._send_card_async = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("test crash"))
+    aowen._send_card_async = lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("test crash")
+    )
 
     try:
         result = handle_pre_gateway_dispatch(event)

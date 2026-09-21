@@ -11,6 +11,7 @@ class TestPatchBasics:
     def test_version_is_available(self) -> None:
         """Plugin should expose __version__ from plugin.yaml."""
         from hermes_lark_streaming import __version__
+
         assert __version__
         assert __version__ != "unknown"
 
@@ -30,7 +31,9 @@ class TestPatchBasics:
         # Check that version is in at least one info log
         info_calls = [str(call) for call in mock_logger.info.call_args_list]
         version_logged = any(__version__ in call for call in info_calls)
-        assert version_logged, f"Version {__version__} not found in log calls: {info_calls}"
+        assert version_logged, (
+            f"Version {__version__} not found in log calls: {info_calls}"
+        )
 
     def test_register_always_registers_aowen_hook(self) -> None:
         """v1.3.6: register() must always register pre_gateway_dispatch hook,
@@ -47,23 +50,28 @@ class TestPatchBasics:
         with (
             patch("hermes_lark_streaming.plugin._ensure_streaming_config"),
             patch("hermes_lark_streaming.patching.apply_patches"),
-            patch("asyncio.get_running_loop", side_effect=RuntimeError("no running loop")),
+            patch(
+                "asyncio.get_running_loop", side_effect=RuntimeError("no running loop")
+            ),
             patch("asyncio.get_event_loop", side_effect=RuntimeError("no event loop")),
         ):
             register(mock_ctx)
 
         # 关键断言：pre_gateway_dispatch hook 必须被注册
-        assert mock_ctx.register_hook.called, \
+        assert mock_ctx.register_hook.called, (
             "register_hook was never called — /aowen commands will not work"
+        )
         call_args = mock_ctx.register_hook.call_args
         hook_name = call_args[0][0] if call_args[0] else call_args[1].get("hook_name")
-        assert hook_name == "pre_gateway_dispatch", \
+        assert hook_name == "pre_gateway_dispatch", (
             f"Expected pre_gateway_dispatch hook, got: {hook_name}"
+        )
 
     def test_monkey_patch_module_imports_version(self) -> None:
         """patching module should import __version__ from the package."""
         from hermes_lark_streaming import __version__ as pkg_version
         from hermes_lark_streaming.patching import __version__ as mp_version
+
         assert mp_version == pkg_version
 
 
@@ -135,8 +143,12 @@ class TestPerMessageContext:
         from hermes_lark_streaming.patching import _wrap_handle_message_with_agent
 
         source = inspect.getsource(_wrap_handle_message_with_agent)
-        assert "msg_context" in source, "Per-message context dict not found in wrapper source"
-        assert "_msg_ctx.set(None)" in source, "Context cleanup not found in wrapper source"
+        assert "msg_context" in source, (
+            "Per-message context dict not found in wrapper source"
+        )
+        assert "_msg_ctx.set(None)" in source, (
+            "Context cleanup not found in wrapper source"
+        )
 
     def test_card_sent_uses_per_message_context(self) -> None:
         """card_sent check should use per-message context, not _msg_ctx.get()."""
@@ -145,13 +157,13 @@ class TestPerMessageContext:
         from hermes_lark_streaming.patching import _wrap_handle_message_with_agent
 
         source = inspect.getsource(_wrap_handle_message_with_agent)
-        lines = source.split('\n')
+        lines = source.split("\n")
         found_msg_context_assignment = False
         found_card_sent_check = False
         for i, line in enumerate(lines):
-            if 'ctx = msg_context' in line:
+            if "ctx = msg_context" in line:
                 found_msg_context_assignment = True
-            if 'card_sent' in line and found_msg_context_assignment:
+            if "card_sent" in line and found_msg_context_assignment:
                 found_card_sent_check = True
                 break
         assert found_msg_context_assignment, "Per-message context assignment not found"
@@ -168,9 +180,13 @@ class TestRecursiveInterruptContext:
         from hermes_lark_streaming.patching import _wrap_run_agent
 
         source = inspect.getsource(_wrap_run_agent)
-        assert "_interrupt_depth" in source, "interrupt_depth not checked in _wrap_run_agent"
+        assert "_interrupt_depth" in source, (
+            "interrupt_depth not checked in _wrap_run_agent"
+        )
         assert "_saved_parent_ctx" in source, "Parent context save not found"
-        assert "on_message_started" in source, "START hook not fired for recursive message"
+        assert "on_message_started" in source, (
+            "START hook not fired for recursive message"
+        )
 
     def test_parent_context_restored(self) -> None:
         """After recursive call, parent context should be restored."""
@@ -179,7 +195,9 @@ class TestRecursiveInterruptContext:
         from hermes_lark_streaming.patching import _wrap_run_agent
 
         source = inspect.getsource(_wrap_run_agent)
-        assert "_saved_parent_ctx is not None" in source, "Parent context restore check not found"
+        assert "_saved_parent_ctx is not None" in source, (
+            "Parent context restore check not found"
+        )
 
     def test_parent_complete_hook_aborted(self) -> None:
         """Parent COMPLETE hook should fire as ABORTED when in recursive scenario."""
@@ -188,7 +206,9 @@ class TestRecursiveInterruptContext:
         from hermes_lark_streaming.patching import _wrap_run_agent
 
         source = inspect.getsource(_wrap_run_agent)
-        assert "aborted=True" in source, "Aborted completion not found for parent context"
+        assert "aborted=True" in source, (
+            "Aborted completion not found for parent context"
+        )
 
     def test_child_complete_hook_fired_before_parent_aborted(self) -> None:
         """Bug fix: Child (B) COMPLETE hook must fire BEFORE parent (A) ABORTED COMPLETE.
@@ -203,10 +223,14 @@ class TestRecursiveInterruptContext:
         source = inspect.getsource(_wrap_run_agent)
         # The COMPLETE hook section should handle both child and parent
         # in the _saved_parent_ctx is not None branch
-        assert "Step 1: Fire B" in source or "child COMPLETE" in source.lower(), \
+        assert "Step 1: Fire B" in source or "child COMPLETE" in source.lower(), (
             "Child COMPLETE hook not found in _wrap_run_agent — bug fix missing!"
-        assert "Step 2: Fire A" in source or "parent COMPLETE" in source.lower() or "ABORTED COMPLETE" in source, \
-            "Parent ABORTED COMPLETE not found in _wrap_run_agent"
+        )
+        assert (
+            "Step 2: Fire A" in source
+            or "parent COMPLETE" in source.lower()
+            or "ABORTED COMPLETE" in source
+        ), "Parent ABORTED COMPLETE not found in _wrap_run_agent"
 
     def test_child_complete_includes_result(self) -> None:
         """Child COMPLETE hook should use the inner _run_agent's result (B's answer)."""
@@ -217,23 +241,24 @@ class TestRecursiveInterruptContext:
         source = inspect.getsource(_wrap_run_agent)
         # In the _saved_parent_ctx branch, the child's COMPLETE should call
         # on_message_completed with result data (not empty answer)
-        lines = source.split('\n')
+        lines = source.split("\n")
         in_saved_parent_block = False
         found_child_final_response = False
         for i, line in enumerate(lines):
-            if '_saved_parent_ctx is not None' in line:
+            if "_saved_parent_ctx is not None" in line:
                 in_saved_parent_block = True
-            if in_saved_parent_block and 'on_message_completed' in line:
+            if in_saved_parent_block and "on_message_completed" in line:
                 # Check nearby lines for final_response
-                nearby = '\n'.join(lines[max(0, i-2):i+10])
-                if 'final_response' in nearby:
+                nearby = "\n".join(lines[max(0, i - 2) : i + 10])
+                if "final_response" in nearby:
                     found_child_final_response = True
                     break
             # Stop looking once we hit the parent ABORTED section
-            if in_saved_parent_block and 'ABORTED' in line and 'Step 2' in line:
+            if in_saved_parent_block and "ABORTED" in line and "Step 2" in line:
                 break
-        assert found_child_final_response, \
+        assert found_child_final_response, (
             "Child COMPLETE should use result.get('final_response') for B's answer"
+        )
 
     def test_parent_card_sent_propagated_to_original_msg_context(self) -> None:
         """v0.15.4 bug fix: parent's card_sent must propagate to original msg_context.
@@ -254,12 +279,16 @@ class TestRecursiveInterruptContext:
 
         source = inspect.getsource(_wrap_run_agent)
         # Check that _original_msg_context_ref is captured
-        assert "_original_msg_context_ref" in source, \
+        assert "_original_msg_context_ref" in source, (
             "_original_msg_context_ref not found in _wrap_run_agent — card_sent propagation fix missing!"
+        )
         # Check that card_sent is propagated to the original context
-        assert '_original_msg_context_ref["card_sent"] = True' in source or \
-               '_original_msg_context_ref["card_sent"]=True' in source.replace(" ", ""), \
+        assert (
+            '_original_msg_context_ref["card_sent"] = True' in source
+            or '_original_msg_context_ref["card_sent"]=True' in source.replace(" ", "")
+        ), (
             "card_sent propagation to _original_msg_context_ref not found in _wrap_run_agent"
+        )
 
 
 class TestImageInterception:
@@ -276,6 +305,7 @@ class TestImageInterception:
     def test_send_image_file_wrapper_deleted(self) -> None:
         """_wrap_feishu_adapter_send_image_file was deleted (2026-06-09 zombie cleanup)."""
         import pytest
+
         with pytest.raises(ImportError):
             from hermes_lark_streaming.patching.adapter import (
                 _dispatch_feishu_outbound_image_file,  # noqa: F401 — import-probe
@@ -284,6 +314,7 @@ class TestImageInterception:
     def test_send_image_wrapper_deleted(self) -> None:
         """_wrap_feishu_adapter_send_image was deleted (2026-06-09 zombie cleanup)."""
         import pytest
+
         with pytest.raises(ImportError):
             from hermes_lark_streaming.patching.adapter import (
                 _dispatch_feishu_outbound_image,  # noqa: F401 — import-probe
@@ -303,8 +334,9 @@ class TestImageInterception:
 
         source = inspect.getsource(apply_patches)
         # The monkey-patching of send_image_file should NOT be present
-        assert "send_image_file = _wrap_feishu_adapter_send_image_file" not in source, \
+        assert "send_image_file = _wrap_feishu_adapter_send_image_file" not in source, (
             "send_image_file should NOT be monkey-patched (v0.15.4 regression fix)"
+        )
 
     def test_send_image_not_monkey_patched(self) -> None:
         """v0.15.4: send_image should NOT be monkey-patched anymore."""
@@ -313,8 +345,9 @@ class TestImageInterception:
         from hermes_lark_streaming.patching import apply_patches
 
         source = inspect.getsource(apply_patches)
-        assert "send_image = _wrap_feishu_adapter_send_image" not in source, \
+        assert "send_image = _wrap_feishu_adapter_send_image" not in source, (
             "send_image should NOT be monkey-patched (v0.15.4 regression fix)"
+        )
 
     def test_send_non_string_passes_through(self) -> None:
         """v0.15.4: _wrap_feishu_adapter_send should pass non-string content (images) through.
@@ -332,27 +365,29 @@ class TestImageInterception:
         # Find the "not isinstance(content, str)" block
         # After the fix, non-string content should have a single return path
         # to orig_send, without any card_sent checks or suppression logic.
-        assert "not isinstance(content, str)" in source, \
+        assert "not isinstance(content, str)" in source, (
             "Non-string content check not found in _wrap_feishu_adapter_send"
+        )
         # The non-string block should pass through directly
         # (not via a SendResult suppression or _try_add_image_to_session)
         # v1.7.0: orig_send calls became passthrough() closures after the
         # relay-mode refactor (_dispatch_feishu_outbound).
-        lines = source.split('\n')
+        lines = source.split("\n")
         in_non_string_block = False
         found_orig_send_in_block = False
         for line in lines:
-            if 'not isinstance(content, str)' in line:
+            if "not isinstance(content, str)" in line:
                 in_non_string_block = True
             elif in_non_string_block:
-                if 'passthrough()' in line or 'orig_send' in line:
+                if "passthrough()" in line or "orig_send" in line:
                     found_orig_send_in_block = True
                     break
                 # If we hit the string content section, stop
-                if 'isinstance(content, str)' in line or 'content.strip()' in line:
+                if "isinstance(content, str)" in line or "content.strip()" in line:
                     break
-        assert found_orig_send_in_block, \
+        assert found_orig_send_in_block, (
             "Non-string content should pass through to orig_send directly"
+        )
 
 
 # ── v0.15.5: Card session existence check + logging/perf fixes ──
@@ -378,8 +413,9 @@ class TestCardSessionExistenceCheck:
         # The fix adds a check for controller session store when result is not None
         # and card_sent is False but a session with card_msg_id exists.
         # v1.3.0: access changed from direct _sessions.get to thread-safe _sess_get.
-        assert "_sess_get" in source or "_sessions" in source, \
+        assert "_sess_get" in source or "_sessions" in source, (
             "Controller session check not found in _wrap_handle_message_with_agent"
+        )
 
     def test_card_session_existence_check_in_feishu_adapter_send(self) -> None:
         """_wrap_feishu_adapter_send should check controller._sessions when card_sent=False."""
@@ -391,8 +427,9 @@ class TestCardSessionExistenceCheck:
         # The fix adds a check in the Agent path when card_sent is False:
         # query controller session store for a session with card_msg_id.
         # v1.3.0: access changed from direct _sessions.get to thread-safe _sess_get.
-        assert "_sess_get" in source or "_sessions" in source, \
+        assert "_sess_get" in source or "_sessions" in source, (
             "Controller session check not found in _wrap_feishu_adapter_send"
+        )
 
     def test_feishu_adapter_send_session_check_sets_card_sent(self) -> None:
         """When a card session is found, card_sent should be set to True."""
@@ -403,17 +440,18 @@ class TestCardSessionExistenceCheck:
         source = inspect.getsource(_dispatch_feishu_outbound)
         # In the agent path, after finding a session with card_msg_id,
         # the fix sets ctx["card_sent"] = True and returns SendResult(success=True)
-        lines = source.split('\n')
+        lines = source.split("\n")
         in_session_check = False
         found_card_sent_set = False
         for i, line in enumerate(lines):
-            if '_sess' in line and 'card_msg_id' in line:
+            if "_sess" in line and "card_msg_id" in line:
                 in_session_check = True
-            if in_session_check and 'card_sent' in line and '= True' in line:
+            if in_session_check and "card_sent" in line and "= True" in line:
                 found_card_sent_set = True
                 break
-        assert found_card_sent_set, \
+        assert found_card_sent_set, (
             "card_sent not set to True after finding card session in _wrap_feishu_adapter_send"
+        )
 
 
 class TestParentAbortedCompleteSetsAlreadySent:
@@ -433,20 +471,25 @@ class TestParentAbortedCompleteSetsAlreadySent:
         source = inspect.getsource(_wrap_run_agent)
         # In the Step 2 block (parent ABORTED COMPLETE), there should be
         # result["already_sent"] = True
-        lines = source.split('\n')
+        lines = source.split("\n")
         in_step2_block = False
         found_already_sent = False
         for i, line in enumerate(lines):
-            if 'Step 2' in line and ('parent' in line.lower() or 'ABORTED' in line):
+            if "Step 2" in line and ("parent" in line.lower() or "ABORTED" in line):
                 in_step2_block = True
-            if in_step2_block and 'already_sent' in line:
+            if in_step2_block and "already_sent" in line:
                 found_already_sent = True
                 break
             # Stop at next major section
-            if in_step2_block and line.strip().startswith('# ──') and 'Step 2' not in line:
+            if (
+                in_step2_block
+                and line.strip().startswith("# ──")
+                and "Step 2" not in line
+            ):
                 break
-        assert found_already_sent, \
+        assert found_already_sent, (
             "result['already_sent'] = True not found in Step 2 (parent ABORTED COMPLETE) block"
+        )
 
 
 class TestHighFrequencyLoggingDowngrade:
@@ -464,11 +507,12 @@ class TestHighFrequencyLoggingDowngrade:
         from hermes_lark_streaming.patching import _maybe_wrap_callbacks
 
         source = inspect.getsource(_maybe_wrap_callbacks)
-        lines = source.split('\n')
+        lines = source.split("\n")
         for line in lines:
-            if 'HLS:' in line and '_logger.' in line:
-                assert '_logger.debug' in line, \
+            if "HLS:" in line and "_logger." in line:
+                assert "_logger.debug" in line, (
                     f"HLS: diagnostic should use _logger.debug, found: {line.strip()}"
+                )
 
     def test_no_legacy_prefixes(self) -> None:
         """No HLS_CALLED, HLS_WRAP, HLS_DIAG, HLS_FIX prefixes should remain."""
@@ -477,9 +521,10 @@ class TestHighFrequencyLoggingDowngrade:
         from hermes_lark_streaming.patching import _maybe_wrap_callbacks
 
         source = inspect.getsource(_maybe_wrap_callbacks)
-        for old_prefix in ('HLS_CALLED', 'HLS_WRAP', 'HLS_DIAG', 'HLS_FIX'):
-            assert old_prefix not in source, \
+        for old_prefix in ("HLS_CALLED", "HLS_WRAP", "HLS_DIAG", "HLS_FIX"):
+            assert old_prefix not in source, (
                 f"Legacy prefix {old_prefix} should be replaced with 'HLS:'"
+            )
 
 
 # ── v0.18.1: GatewayRunner delayed patch + edit chat_id fix ──
@@ -491,6 +536,7 @@ class TestApplyGatewayRunnerPatches:
     def test_apply_gateway_runner_patches_function_exists(self) -> None:
         """_apply_gateway_runner_patches should exist as a callable."""
         from hermes_lark_streaming.patching import _apply_gateway_runner_patches
+
         assert callable(_apply_gateway_runner_patches)
 
 
@@ -527,6 +573,7 @@ class TestOnDemandRepatchV150:
 
     def test_patched_feishu_classes_set_exists(self) -> None:
         from hermes_lark_streaming.patching import _patched_feishu_classes
+
         assert isinstance(_patched_feishu_classes, set)
 
     @pytest.mark.asyncio
@@ -538,7 +585,9 @@ class TestOnDemandRepatchV150:
 
         # Create a fake adapter class (not in _patched_feishu_classes)
         class FakeAdapter:
-            async def send(self, chat_id, content, reply_to=None, metadata=None, **kwargs):
+            async def send(
+                self, chat_id, content, reply_to=None, metadata=None, **kwargs
+            ):
                 return "sent"
 
         fake_adapter = FakeAdapter()
@@ -562,7 +611,9 @@ class TestOnDemandRepatchV150:
             # Call wrapped send — should trigger repatch
             await wrapped_send(fake_adapter, "chat1", "hello")
 
-            assert repatch_called["yes"], "on-demand repatch should trigger for unpatched class"
+            assert repatch_called["yes"], (
+                "on-demand repatch should trigger for unpatched class"
+            )
             assert repatch_called["cls"] is FakeAdapter
         finally:
             P._apply_feishu_adapter_patches = orig_apply
@@ -576,7 +627,9 @@ class TestOnDemandRepatchV150:
         from hermes_lark_streaming.patching.adapter import _wrap_feishu_adapter_send
 
         class FakeAdapter2:
-            async def send(self, chat_id, content, reply_to=None, metadata=None, **kwargs):
+            async def send(
+                self, chat_id, content, reply_to=None, metadata=None, **kwargs
+            ):
                 return "sent"
 
         fake_adapter = FakeAdapter2()
@@ -595,7 +648,9 @@ class TestOnDemandRepatchV150:
         P._apply_feishu_adapter_patches = fake_apply
         try:
             await wrapped_send(fake_adapter, "chat1", "hello")
-            assert not repatch_called["yes"], "repatch should NOT trigger for already-patched class"
+            assert not repatch_called["yes"], (
+                "repatch should NOT trigger for already-patched class"
+            )
         finally:
             P._apply_feishu_adapter_patches = orig_apply
             P._patched_feishu_classes.discard(id(FakeAdapter2))
@@ -622,6 +677,7 @@ class TestCreateAdapterHookV160:
 
         class FakeDeferredFeishuAdapter:
             """模拟 hermes deferred loading 产生的真身 class B（未被 patch）。"""
+
             platform = type("P", (), {"value": "feishu"})()
 
             def __init__(self, config):
@@ -781,17 +837,24 @@ class TestCreateAdapterHookV160:
 
         fake_mod = _types.ModuleType("gateway.platform_registry")
         fake_mod.platform_registry = fake_pr
-        monkeypatch.setitem(__import__("sys").modules, "gateway.platform_registry", fake_mod)
+        monkeypatch.setitem(
+            __import__("sys").modules, "gateway.platform_registry", fake_mod
+        )
 
         result = P._apply_create_adapter_hook()
         assert result is True
-        assert getattr(fake_pr.create_adapter, "_hls_create_adapter_wrapped", False) is True
+        assert (
+            getattr(fake_pr.create_adapter, "_hls_create_adapter_wrapped", False)
+            is True
+        )
 
         # Calling again should be idempotent (guard short-circuits)
         result2 = P._apply_create_adapter_hook()
         assert result2 is True
 
-    def test_apply_create_adapter_hook_handles_missing_registry(self, monkeypatch) -> None:
+    def test_apply_create_adapter_hook_handles_missing_registry(
+        self, monkeypatch
+    ) -> None:
         """If gateway.platform_registry import fails, hook returns False (deferred)."""
         import builtins
         import sys

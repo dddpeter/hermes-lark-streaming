@@ -15,11 +15,16 @@ def _resolve_eid(fallback_eid: str | None) -> str | None:
     _eid = _get_event_message_id()
     return _eid if _eid else fallback_eid
 
+
 def _maybe_wrap_callbacks(agent) -> None:
     """Replace streaming callbacks on *agent* with wrappers that also fire
     Feishu CardKit updates.  Skips silently when outside a Feishu message
     context (i.e. no event_message_id in context)."""
-    _logger.debug("HLS: _maybe_wrap_callbacks invoked, has_stream=%s, eid_lookup=%s", bool(getattr(agent, "stream_delta_callback", None)), bool(_get_event_message_id()))
+    _logger.debug(
+        "HLS: _maybe_wrap_callbacks invoked, has_stream=%s, eid_lookup=%s",
+        bool(getattr(agent, "stream_delta_callback", None)),
+        bool(_get_event_message_id()),
+    )
 
     eid = _get_event_message_id()
     if not eid:
@@ -29,9 +34,8 @@ def _maybe_wrap_callbacks(agent) -> None:
     _current_stream = getattr(agent, "stream_delta_callback", None)
     _current_interim = getattr(agent, "interim_assistant_callback", None)
     _any_wrapped = (
-        (_current_stream and getattr(_current_stream, "_hls_wrapper", False))
-        or (_current_interim and getattr(_current_interim, "_hls_wrapper", False))
-    )
+        _current_stream and getattr(_current_stream, "_hls_wrapper", False)
+    ) or (_current_interim and getattr(_current_interim, "_hls_wrapper", False))
     if _any_wrapped:
         # ── Late-arriving reasoning_callback fix ──
         _late_reasoning = getattr(agent, "reasoning_callback", None)
@@ -42,6 +46,7 @@ def _maybe_wrap_callbacks(agent) -> None:
                 _eid = _resolve_eid(eid)
                 try:
                     from .hooks import on_reasoning_delta
+
                     if text and _eid:
                         on_reasoning_delta(message_id=_eid, text=text)
                 except Exception:
@@ -73,7 +78,9 @@ def _maybe_wrap_callbacks(agent) -> None:
 
                 if text and on_answer_delta(message_id=_eid, text=text):
                     # Record total consumed length for dedup with interim_assistant_callback
-                    _stream_consumed_len[_eid] = _stream_consumed_len.get(_eid, 0) + len(text)
+                    _stream_consumed_len[_eid] = _stream_consumed_len.get(
+                        _eid, 0
+                    ) + len(text)
                     return
             except Exception:
                 _logger.debug("HLS: answer_wrapper exception", exc_info=True)
@@ -95,7 +102,9 @@ def _maybe_wrap_callbacks(agent) -> None:
                 from .hooks import on_answer_delta
 
                 if text and on_answer_delta(message_id=_eid, text=text):
-                    _stream_consumed_len[_eid] = _stream_consumed_len.get(_eid, 0) + len(text)
+                    _stream_consumed_len[_eid] = _stream_consumed_len.get(
+                        _eid, 0
+                    ) + len(text)
                     return
             except Exception:
                 _logger.debug("HLS: answer_wrapper_synthetic exception", exc_info=True)
@@ -129,6 +138,7 @@ def _maybe_wrap_callbacks(agent) -> None:
 
                 if text:
                     from .hooks import on_thinking_delta
+
                     consumed = on_thinking_delta(message_id=_eid, text=text)
                     if consumed:
                         return
@@ -140,7 +150,9 @@ def _maybe_wrap_callbacks(agent) -> None:
         setattr(agent.interim_assistant_callback, "_hls_wrapper", True)
         _logger.debug("HLS: _maybe_wrap_callbacks interim_assistant_callback wrapped")
     else:
-        _logger.debug("HLS: _maybe_wrap_callbacks NO interim_assistant_callback on agent")
+        _logger.debug(
+            "HLS: _maybe_wrap_callbacks NO interim_assistant_callback on agent"
+        )
 
     # ── TOOL: wrap tool_progress_callback ──
     if getattr(agent, "tool_progress_callback", None):
@@ -157,7 +169,9 @@ def _maybe_wrap_callbacks(agent) -> None:
                     if on_tool_updated(
                         message_id=_eid,
                         tool_name=tool_name or "",
-                        status="started" if event_type == "tool.started" else "completed",
+                        status="started"
+                        if event_type == "tool.started"
+                        else "completed",
                         detail=preview or "",
                     ):
                         return

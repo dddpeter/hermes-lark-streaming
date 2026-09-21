@@ -19,8 +19,8 @@ if TYPE_CHECKING:
     pass
 
 __all__ = [
-    'build_streaming_card_v2',
-    '_enforce_card_element_limit',
+    "build_streaming_card_v2",
+    "_enforce_card_element_limit",
 ]
 
 # Feishu Card 2.0 element limit — every JSON object with a ``tag`` key
@@ -28,6 +28,7 @@ __all__ = [
 _FEISHU_ELEMENT_LIMIT = 200
 
 _ELEMENT_LIMIT_MARGIN = 5
+
 
 def _enforce_card_element_limit(
     card: dict[str, Any],
@@ -45,7 +46,10 @@ def _enforce_card_element_limit(
     elements = body.get("elements", [])
     panel = None
     for elem in elements:
-        if elem.get("element_id") == panel_element_id and elem.get("tag") == "collapsible_panel":
+        if (
+            elem.get("element_id") == panel_element_id
+            and elem.get("tag") == "collapsible_panel"
+        ):
             panel = elem
             break
 
@@ -61,7 +65,11 @@ def _enforce_card_element_limit(
         if isinstance(child.get("content"), str) and "已折叠" in child["content"]:
             hint_idx = i
             break
-    _HINT_TEMPLATE = {"tag": "markdown", "content": "⚡ 还有 0 项已折叠", "text_size": "notation"}
+    _HINT_TEMPLATE = {
+        "tag": "markdown",
+        "content": "⚡ 还有 0 项已折叠",
+        "text_size": "notation",
+    }
     _HINT_TAG_COUNT = _count_tag_objects(_HINT_TEMPLATE)  # typically 1
     if hint_idx is None:
         total += _HINT_TAG_COUNT  # Reserve exact space for the new collapse hint
@@ -71,7 +79,11 @@ def _enforce_card_element_limit(
     while total > threshold and len(children) > 1:
         # Skip the collapse hint (first child if it ends with "已折叠")
         first_content = children[0].get("content", "")
-        remove_idx = 1 if isinstance(first_content, str) and first_content.endswith("已折叠") else 0
+        remove_idx = (
+            1
+            if isinstance(first_content, str) and first_content.endswith("已折叠")
+            else 0
+        )
         removed = children.pop(remove_idx)
         total -= _count_tag_objects([removed])
         trimmed_count += 1
@@ -94,7 +106,7 @@ def _enforce_card_element_limit(
             if _idx > 0:
                 # Walk backwards skipping whitespace, then collect digits
                 _end = _idx
-                while _end > 0 and old_hint[_end - 1] == ' ':
+                while _end > 0 and old_hint[_end - 1] == " ":
                     _end -= 1
                 _start = _end
                 while _start > 0 and old_hint[_start - 1].isdigit():
@@ -104,15 +116,19 @@ def _enforce_card_element_limit(
             total_trimmed = existing_count + trimmed_count
             children[hint_idx]["content"] = f"⚡ 还有 {total_trimmed} 项已折叠"
         else:
-            children.insert(0, {
-                "tag": "markdown",
-                "content": f"⚡ 还有 {trimmed_count} 项已折叠",
-                "text_size": "notation",
-            })
+            children.insert(
+                0,
+                {
+                    "tag": "markdown",
+                    "content": f"⚡ 还有 {trimmed_count} 项已折叠",
+                    "text_size": "notation",
+                },
+            )
 
     # Update panel children in the card
     panel["elements"] = children
     return card
+
 
 def _build_summary(text: str) -> dict[str, Any]:
     """Feishu CardKit 2.0 displays ``i18n_content.<locale>`` for users"""
@@ -121,6 +137,7 @@ def _build_summary(text: str) -> dict[str, Any]:
         "content": truncated,
         "i18n_content": _i18n(truncated, truncated),
     }
+
 
 def build_streaming_card_v2(
     *,
@@ -141,7 +158,9 @@ def build_streaming_card_v2(
 
     # ── Unified panel placeholder (linear mode — single panel for reasoning+tools) ──
     if include_unified_panel:
-        elements.append(_build_unified_panel_placeholder(expanded=streaming_panel_expanded))
+        elements.append(
+            _build_unified_panel_placeholder(expanded=streaming_panel_expanded)
+        )
 
     # ── Streaming answer element ──
     if show_streaming_element and include_answer_element:

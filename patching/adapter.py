@@ -21,12 +21,21 @@ from . import (
 
 # ── FeishuAdapter interception layer (Phase 1: gateway message cards) ─
 
+
 def _classify_gateway_message(content: str) -> str:
     """Classify a gateway-internal message by its content for card category."""
     if not isinstance(content, str):
         return "system"
     # Auth / pairing messages
-    if any(kw in content for kw in ("pairing code", "pairing requests", "配对码", "I don't recognize you")):
+    if any(
+        kw in content
+        for kw in (
+            "pairing code",
+            "pairing requests",
+            "配对码",
+            "I don't recognize you",
+        )
+    ):
         return "auth"
     # v1.8.0 (P3-4): Gateway lifecycle notices — informational, NOT errors.
     # hermes _notify_active_sessions_of_shutdown (gateway/run.py) hardcodes
@@ -36,22 +45,55 @@ def _classify_gateway_message(content: str) -> str:
     # 后重启…". The ⚠️ prefix made every one of them land in the "error"
     # bucket below — production 2026-08 audit: 13/13 planned restarts were
     # misclassified as errors in the card registry / logs.
-    if any(kw in content for kw in (
-        "Gateway restarting", "Gateway shutting down", "Gateway stopping",
-        "queued for the next turn", "not accepting another turn",
-        "Draining", "正在重启网关", "活跃代理结束后重启",
-    )):
+    if any(
+        kw in content
+        for kw in (
+            "Gateway restarting",
+            "Gateway shutting down",
+            "Gateway stopping",
+            "queued for the next turn",
+            "not accepting another turn",
+            "Draining",
+            "正在重启网关",
+            "活跃代理结束后重启",
+        )
+    ):
         return "lifecycle"
     # Error messages
     if any(kw in content for kw in ("❌", "⚠️", "error", "failed", "Error", "Failed")):
         return "error"
     # Session lifecycle messages
-    if any(kw in content for kw in ("Session", "session", "🔄", "♻", "compress", "compres")):
+    if any(
+        kw in content for kw in ("Session", "session", "🔄", "♻", "compress", "compres")
+    ):
         return "session"
     # Slash command replies (common prefixes)
-    if any(kw in content for kw in ("/help", "/status", "/model", "/usage", "/whoami", "/reset", "/new", "/stop", "/resume", "/undo", "/compress", "/goal", "/agents", "/background", "/queue", "/steer", "/yolo", "/footer")):
+    if any(
+        kw in content
+        for kw in (
+            "/help",
+            "/status",
+            "/model",
+            "/usage",
+            "/whoami",
+            "/reset",
+            "/new",
+            "/stop",
+            "/resume",
+            "/undo",
+            "/compress",
+            "/goal",
+            "/agents",
+            "/background",
+            "/queue",
+            "/steer",
+            "/yolo",
+            "/footer",
+        )
+    ):
         return "slash"
     return "system"
+
 
 def _is_cron_delivery_metadata(metadata: Any) -> bool:
     """Detect hermes cron delivery — cron/scheduler.py stamps ``job_id`` into
@@ -80,6 +122,7 @@ async def _dispatch_feishu_outbound(
     # NOT duplicate agent replies. They must NEVER be suppressed by the
     try:
         from gateway.platforms.base import EphemeralReply
+
         if isinstance(content, EphemeralReply):
             return await passthrough()
     except (ImportError, AttributeError):
@@ -94,7 +137,9 @@ async def _dispatch_feishu_outbound(
 
     _text_content = content
 
-    if getattr(adapter, "_hls_cron_sending", 0) or getattr(adapter, "_hls_bg_sending", 0):
+    if getattr(adapter, "_hls_cron_sending", 0) or getattr(
+        adapter, "_hls_bg_sending", 0
+    ):
         return await passthrough()
 
     # ── Cron delivery lane (v1.7.0 RELAY fix, P1) ──
@@ -108,6 +153,7 @@ async def _dispatch_feishu_outbound(
     if _is_cron_delivery_metadata(metadata):
         try:
             from ..controller import get_controller
+
             _ctrl = get_controller()
             if _ctrl and _ctrl.enabled and str(content).strip():
                 _logger.info(
@@ -122,8 +168,7 @@ async def _dispatch_feishu_outbound(
                 return _send_result_ok()
         except Exception:
             _logger.warning(
-                "relay cron card delivery failed, falling back to plain text "
-                "chat=%s",
+                "relay cron card delivery failed, falling back to plain text chat=%s",
                 (chat_id or "?")[:12],
                 exc_info=True,
             )
@@ -141,6 +186,7 @@ async def _dispatch_feishu_outbound(
             else:
                 try:
                     from ..controller import get_controller
+
                     _ctrl = get_controller()
                     if _ctrl and _ctrl.enabled:
                         _sess = _ctrl._sess_get(eid)
@@ -148,7 +194,9 @@ async def _dispatch_feishu_outbound(
                             _logger.info(
                                 "feishu_adapter_send: suppressing text reply "
                                 "(card exists for msg=%s, state=%s, card_sent=%s)",
-                                eid[:12], _sess.state, ctx.get("card_sent"),
+                                eid[:12],
+                                _sess.state,
+                                ctx.get("card_sent"),
                             )
                             ctx["card_sent"] = True
                             return _send_result_ok()
@@ -175,6 +223,7 @@ async def _dispatch_feishu_outbound(
     if _is_stop_response:
         try:
             from ..controller import get_controller
+
             _ctrl = get_controller()
             if _ctrl and _ctrl.enabled:
                 # Find an active streaming session in this chat
@@ -192,6 +241,7 @@ async def _dispatch_feishu_outbound(
                         )
                         try:
                             from .hooks import on_message_aborted
+
                             on_message_aborted(message_id=_sess.message_id)
                         except Exception:
                             _logger.debug("HLS: suppressed exception", exc_info=True)
@@ -207,12 +257,15 @@ async def _dispatch_feishu_outbound(
     )
     try:
         from ..controller import get_controller
+
         ctrl = get_controller()
         if ctrl and ctrl.enabled:
             # Check if gateway_cards feature is enabled
             cfg = _get_config()
             if not cfg.gateway_cards:
-                _logger.info("gateway_send: gateway_cards disabled, falling back to plain text")
+                _logger.info(
+                    "gateway_send: gateway_cards disabled, falling back to plain text"
+                )
                 return await passthrough()
 
             cleaned = _text_content
@@ -223,7 +276,8 @@ async def _dispatch_feishu_outbound(
 
             category = _classify_gateway_message(cleaned or content)
             card_msg_id, card_id = await ctrl._do_gateway_deliver(
-                chat_id, cleaned.strip() if cleaned.strip() else content,
+                chat_id,
+                cleaned.strip() if cleaned.strip() else content,
                 category=category,
             )
             if card_msg_id:
@@ -272,7 +326,10 @@ def _wrap_feishu_adapter_send(orig_send: Callable) -> Callable:
     v1.7.0: interception body moved to _dispatch_feishu_outbound (shared
     with the RELAY wrappers). This wrapper binds the original method.
     """
-    async def _intercepted_send(self_feishu, chat_id, content, reply_to=None, metadata=None, **kwargs):
+
+    async def _intercepted_send(
+        self_feishu, chat_id, content, reply_to=None, metadata=None, **kwargs
+    ):
         # On-demand repatch: if this adapter instance's class isn't patched yet
         # (deferred loading edge case), patch it now. O(1) lookup.
         # v1.7.0 (R1-06): sentinel attr is the PRIMARY check — id() values can
@@ -280,17 +337,29 @@ def _wrap_feishu_adapter_send(orig_send: Callable) -> Callable:
         # dedupe set skip a fresh class. The id set stays as a mirror for
         # compatibility with existing tests.
         _cls = type(self_feishu)
-        if not getattr(_cls, "_hls_patched", False) and id(_cls) not in _patched_feishu_classes:
+        if (
+            not getattr(_cls, "_hls_patched", False)
+            and id(_cls) not in _patched_feishu_classes
+        ):
             from . import _apply_feishu_adapter_patches
+
             _apply_feishu_adapter_patches(_cls, is_repatch=True)
 
         return await _dispatch_feishu_outbound(
             self_feishu,
             chat_id,
             content,
-            lambda: orig_send(self_feishu, chat_id, content, reply_to=reply_to, metadata=metadata, **kwargs),
+            lambda: orig_send(
+                self_feishu,
+                chat_id,
+                content,
+                reply_to=reply_to,
+                metadata=metadata,
+                **kwargs,
+            ),
             metadata=metadata,
         )
+
     return _intercepted_send
 
 
@@ -310,6 +379,7 @@ def _wrap_feishu_adapter_send(orig_send: Callable) -> Callable:
 # pushes degraded to plain text and gateway-internal messages lost their
 # cards. These wrappers route Feishu-bound relay sends through the SAME
 # _dispatch_feishu_outbound logic (P1 RELAY fix).
+
 
 def _resolve_relay_logical_platform(adapter: Any, chat_id: Any, metadata: Any) -> str:
     """Best-effort logical platform for one relay send ("" when unknown)."""
@@ -332,48 +402,111 @@ def _is_relay_interim_send(metadata: Any) -> bool:
 
 def _wrap_relay_adapter_send(orig_send: Callable) -> Callable:
     """Intercept ``RelayAdapter.send()`` for relay-fronted Feishu chats."""
-    async def _intercepted_relay_send(self_relay, chat_id, content, reply_to=None, metadata=None, **kwargs):
+
+    async def _intercepted_relay_send(
+        self_relay, chat_id, content, reply_to=None, metadata=None, **kwargs
+    ):
         try:
             _platform = _resolve_relay_logical_platform(self_relay, chat_id, metadata)
         except Exception:
             _platform = ""
         if _platform not in ("feishu", "lark"):
             # Relay fronts N platforms — anything not Feishu/Lark passes through.
-            return await orig_send(self_relay, chat_id, content, reply_to=reply_to, metadata=metadata, **kwargs)
+            return await orig_send(
+                self_relay,
+                chat_id,
+                content,
+                reply_to=reply_to,
+                metadata=metadata,
+                **kwargs,
+            )
         if _is_relay_interim_send(metadata):
-            return await orig_send(self_relay, chat_id, content, reply_to=reply_to, metadata=metadata, **kwargs)
+            return await orig_send(
+                self_relay,
+                chat_id,
+                content,
+                reply_to=reply_to,
+                metadata=metadata,
+                **kwargs,
+            )
         _logger.debug(
             "relay_send: feishu-bound relay send intercepted chat=%s content_len=%d",
-            (chat_id or "?")[:12], len(content) if isinstance(content, str) else -1,
+            (chat_id or "?")[:12],
+            len(content) if isinstance(content, str) else -1,
         )
         return await _dispatch_feishu_outbound(
             self_relay,
             chat_id,
             content,
-            lambda: orig_send(self_relay, chat_id, content, reply_to=reply_to, metadata=metadata, **kwargs),
+            lambda: orig_send(
+                self_relay,
+                chat_id,
+                content,
+                reply_to=reply_to,
+                metadata=metadata,
+                **kwargs,
+            ),
             metadata=metadata,
         )
+
     return _intercepted_relay_send
 
 
 def _wrap_relay_adapter_send_for_platform(orig_sfp: Callable) -> Callable:
     """Intercept ``RelayAdapter.send_for_platform()`` — cron/scheduled lane."""
-    async def _intercepted_relay_sfp(self_relay, logical_platform, chat_id, content, reply_to=None, metadata=None, **kwargs):
+
+    async def _intercepted_relay_sfp(
+        self_relay,
+        logical_platform,
+        chat_id,
+        content,
+        reply_to=None,
+        metadata=None,
+        **kwargs,
+    ):
         _platform_value = getattr(logical_platform, "value", logical_platform)
         if str(_platform_value or "").lower() not in ("feishu", "lark"):
-            return await orig_sfp(self_relay, logical_platform, chat_id, content, reply_to=reply_to, metadata=metadata, **kwargs)
+            return await orig_sfp(
+                self_relay,
+                logical_platform,
+                chat_id,
+                content,
+                reply_to=reply_to,
+                metadata=metadata,
+                **kwargs,
+            )
         if _is_relay_interim_send(metadata):
-            return await orig_sfp(self_relay, logical_platform, chat_id, content, reply_to=reply_to, metadata=metadata, **kwargs)
+            return await orig_sfp(
+                self_relay,
+                logical_platform,
+                chat_id,
+                content,
+                reply_to=reply_to,
+                metadata=metadata,
+                **kwargs,
+            )
         return await _dispatch_feishu_outbound(
             self_relay,
             chat_id,
             content,
-            lambda: orig_sfp(self_relay, logical_platform, chat_id, content, reply_to=reply_to, metadata=metadata, **kwargs),
+            lambda: orig_sfp(
+                self_relay,
+                logical_platform,
+                chat_id,
+                content,
+                reply_to=reply_to,
+                metadata=metadata,
+                **kwargs,
+            ),
             metadata=metadata,
         )
+
     return _intercepted_relay_sfp
 
-def _register_gateway_card(card_msg_id: str, *, chat_id: str, card_id: str | None, category: str) -> None:
+
+def _register_gateway_card(
+    card_msg_id: str, *, chat_id: str, card_id: str | None, category: str
+) -> None:
     """Register a gateway card so edit_message can update it later."""
     if not card_msg_id:
         return
@@ -388,20 +521,33 @@ def _register_gateway_card(card_msg_id: str, *, chat_id: str, card_id: str | Non
         _GATEWAY_CARDS_MAX = 500
         if len(_gateway_cards) > _GATEWAY_CARDS_MAX:
             # Sort by registered_at, remove oldest 20% to amortize prune cost
-            excess = len(_gateway_cards) - _GATEWAY_CARDS_MAX + (_GATEWAY_CARDS_MAX // 5)
-            sorted_keys = sorted(_gateway_cards, key=lambda k: _gateway_cards[k].get("registered_at", 0))
+            excess = (
+                len(_gateway_cards) - _GATEWAY_CARDS_MAX + (_GATEWAY_CARDS_MAX // 5)
+            )
+            sorted_keys = sorted(
+                _gateway_cards, key=lambda k: _gateway_cards[k].get("registered_at", 0)
+            )
             for k in sorted_keys[:excess]:
                 _gateway_cards.pop(k, None)
-            _logger.debug("HLS: _gateway_cards pruned %d entries (was %d)", excess, len(_gateway_cards) + excess)
+            _logger.debug(
+                "HLS: _gateway_cards pruned %d entries (was %d)",
+                excess,
+                len(_gateway_cards) + excess,
+            )
+
 
 def _unregister_gateway_card(card_msg_id: str) -> None:
     """Remove a gateway card from the registry."""
     with _gateway_cards_lock:
         _gateway_cards.pop(card_msg_id, None)
 
+
 def _wrap_feishu_adapter_edit(orig_edit: Callable) -> Callable:
     """Intercept ``FeishuAdapter.edit_message()`` — update gateway card content."""
-    async def _intercepted_edit(self_feishu, chat_id, message_id, content, metadata=None, **kwargs):
+
+    async def _intercepted_edit(
+        self_feishu, chat_id, message_id, content, metadata=None, **kwargs
+    ):
         # ── Check if this message_id is a gateway card ──
         with _gateway_cards_lock:
             card_info = _gateway_cards.get(message_id)
@@ -414,6 +560,7 @@ def _wrap_feishu_adapter_edit(orig_edit: Callable) -> Callable:
             )
             try:
                 from ..controller import get_controller
+
                 ctrl = get_controller()
                 if ctrl and ctrl.enabled:
                     # Check if gateway_cards feature is enabled
@@ -438,6 +585,7 @@ def _wrap_feishu_adapter_edit(orig_edit: Callable) -> Callable:
                                     _gateway_cards[message_id]["category"] = category
                             try:
                                 from gateway.platforms.base import SendResult
+
                                 return SendResult(success=True)
                             except (ImportError, AttributeError):
                                 return None
@@ -447,12 +595,15 @@ def _wrap_feishu_adapter_edit(orig_edit: Callable) -> Callable:
         # ── Fallback: original edit_message ──
         _fallback_kwargs = {k: v for k, v in kwargs.items() if k != "metadata"}
         try:
-            return await orig_edit(self_feishu, chat_id, message_id, content, **_fallback_kwargs)
+            return await orig_edit(
+                self_feishu, chat_id, message_id, content, **_fallback_kwargs
+            )
         except TypeError:
             # If the original still rejects kwargs, try with no extra kwargs
             return await orig_edit(self_feishu, chat_id, message_id, content)
 
     return _intercepted_edit
+
 
 # ── Reaction → card status indicator (Phase 3) ─────────────────────
 
@@ -475,8 +626,10 @@ _REACTION_STATUS_MAP: dict[str, str] = {
     "CrossMark": "Error",
 }
 
+
 def _wrap_feishu_adapter_add_reaction(orig_add_reaction: Callable) -> Callable:
     """Intercept ``FeishuAdapter.add_reaction()`` — card status indicator."""
+
     async def _intercepted_add_reaction(self_feishu, message_id, emoji, **kwargs):
         # ── Check if this message_id is a gateway card ──
         with _gateway_cards_lock:
@@ -493,6 +646,7 @@ def _wrap_feishu_adapter_add_reaction(orig_add_reaction: Callable) -> Callable:
                 )
                 try:
                     from ..controller import get_controller
+
                     ctrl = get_controller()
                     if ctrl and ctrl.enabled:
                         cfg = _get_config()
@@ -509,6 +663,7 @@ def _wrap_feishu_adapter_add_reaction(orig_add_reaction: Callable) -> Callable:
                                 # Suppress the actual reaction — card shows status instead
                                 try:
                                     from gateway.platforms.base import SendResult
+
                                     return SendResult(success=True)
                                 except (ImportError, AttributeError):
                                     return None
@@ -520,8 +675,10 @@ def _wrap_feishu_adapter_add_reaction(orig_add_reaction: Callable) -> Callable:
 
     return _intercepted_add_reaction
 
+
 def _wrap_feishu_adapter_delete_reaction(orig_delete_reaction: Callable) -> Callable:
     """Intercept ``FeishuAdapter.delete_reaction()`` — clear card status."""
+
     async def _intercepted_delete_reaction(self_feishu, message_id, emoji, **kwargs):
         # ── Check if this message_id is a gateway card ──
         with _gateway_cards_lock:
@@ -537,6 +694,7 @@ def _wrap_feishu_adapter_delete_reaction(orig_delete_reaction: Callable) -> Call
                 )
                 try:
                     from ..controller import get_controller
+
                     ctrl = get_controller()
                     if ctrl and ctrl.enabled:
                         cfg = _get_config()
@@ -552,6 +710,7 @@ def _wrap_feishu_adapter_delete_reaction(orig_delete_reaction: Callable) -> Call
                             if updated:
                                 try:
                                     from gateway.platforms.base import SendResult
+
                                     return SendResult(success=True)
                                 except (ImportError, AttributeError):
                                     return None
@@ -563,17 +722,25 @@ def _wrap_feishu_adapter_delete_reaction(orig_delete_reaction: Callable) -> Call
 
     return _intercepted_delete_reaction
 
+
 _clarify_lock = threading.Lock()
 _clarify_choices: dict[str, list[str]] = {}  # clarify_id → choices list (normalized)
 _clarify_questions: dict[str, str] = {}  # clarify_id → question text
-_clarify_card_msg_ids: dict[str, str] = {}  # clarify_id → card_msg_id (for server-side confirm update)
-_clarify_selections: dict[str, str] = {}  # clarify_id → user's selected/input text (for retry)
-_clarify_timestamps: dict[str, float] = {}  # clarify_id → creation time (for TTL cleanup)
+_clarify_card_msg_ids: dict[
+    str, str
+] = {}  # clarify_id → card_msg_id (for server-side confirm update)
+_clarify_selections: dict[
+    str, str
+] = {}  # clarify_id → user's selected/input text (for retry)
+_clarify_timestamps: dict[
+    str, float
+] = {}  # clarify_id → creation time (for TTL cleanup)
 _CLARIFY_TTL_SEC = 30 * 60  # 30 分钟后未确认的追问自动清除
 
 # Backward-compatible aliases (old names used in tests)
 _clarify_answers = _clarify_selections
 _clarify_card_info = _clarify_card_msg_ids
+
 
 def _prune_expired_clarify() -> None:
     """清理过期的追问数据（超过 _CLARIFY_TTL_SEC 未确认的条目）."""
@@ -581,7 +748,11 @@ def _prune_expired_clarify() -> None:
         if not _clarify_timestamps:
             return
         now = time.time()
-        expired = [cid for cid, ts in _clarify_timestamps.items() if now - ts > _CLARIFY_TTL_SEC]
+        expired = [
+            cid
+            for cid, ts in _clarify_timestamps.items()
+            if now - ts > _CLARIFY_TTL_SEC
+        ]
         for cid in expired:
             _clarify_choices.pop(cid, None)
             _clarify_questions.pop(cid, None)
@@ -591,11 +762,19 @@ def _prune_expired_clarify() -> None:
         if expired:
             _logger.debug("HLS: pruned %d expired clarify entries", len(expired))
 
+
 def _wrap_feishu_adapter_send_clarify(orig_send_clarify: Callable) -> Callable:
     """Intercept ``FeishuAdapter.send_clarify()`` — render interactive card."""
 
     async def _intercepted_send_clarify(
-        self_feishu, chat_id, question, choices, clarify_id, session_key, metadata=None, **kwargs
+        self_feishu,
+        chat_id,
+        question,
+        choices,
+        clarify_id,
+        session_key,
+        metadata=None,
+        **kwargs,
     ):
         _logger.info(
             "clarify card: send_clarify intercepted chat=%s question=%r choices=%s clarify_id=%s",
@@ -610,12 +789,21 @@ def _wrap_feishu_adapter_send_clarify(orig_send_clarify: Callable) -> Callable:
 
         try:
             from ..controller import get_controller
+
             ctrl = get_controller()
             if not ctrl or not ctrl.enabled or not ctrl._client_ok():
-                _logger.debug("clarify card: controller not available, falling back to text")
+                _logger.debug(
+                    "clarify card: controller not available, falling back to text"
+                )
                 return await orig_send_clarify(
-                    self_feishu, chat_id, question, choices, clarify_id, session_key,
-                    metadata=metadata, **kwargs
+                    self_feishu,
+                    chat_id,
+                    question,
+                    choices,
+                    clarify_id,
+                    session_key,
+                    metadata=metadata,
+                    **kwargs,
                 )
 
             # v1.3.0 fix: Flush + cancel pending timers BEFORE sending clarify card.
@@ -641,7 +829,9 @@ def _wrap_feishu_adapter_send_clarify(orig_send_clarify: Callable) -> Callable:
                             _sess.flush._cancel_timer()
                         break
             except Exception:
-                _logger.debug("clarify card: pre-flush failed (non-fatal)", exc_info=True)
+                _logger.debug(
+                    "clarify card: pre-flush failed (non-fatal)", exc_info=True
+                )
 
             from ..cardkit import build_clarify_card, normalize_clarify_choices
 
@@ -682,18 +872,28 @@ def _wrap_feishu_adapter_send_clarify(orig_send_clarify: Callable) -> Callable:
                     _clarify_card_msg_ids[clarify_id] = card_msg_id
 
             # Register the card in gateway card registry (for edit tracking)
-            _register_gateway_card(card_msg_id, chat_id=chat_id, card_id=None, category="clarify")
+            _register_gateway_card(
+                card_msg_id, chat_id=chat_id, card_id=None, category="clarify"
+            )
 
             try:
                 from tools.clarify_gateway import mark_awaiting_text
+
                 mark_awaiting_text(clarify_id)
-                _logger.debug("clarify card: mark_awaiting_text called for clarify_id=%s", (clarify_id or "?")[:12])
+                _logger.debug(
+                    "clarify card: mark_awaiting_text called for clarify_id=%s",
+                    (clarify_id or "?")[:12],
+                )
             except (ImportError, Exception) as e:
-                _logger.debug("clarify card: mark_awaiting_text failed (%s), card callback will handle resolution", e)
+                _logger.debug(
+                    "clarify card: mark_awaiting_text failed (%s), card callback will handle resolution",
+                    e,
+                )
 
             # Return success to suppress the original text-based send_clarify
             try:
                 from gateway.platforms.base import SendResult
+
                 return SendResult(success=True, message_id=card_msg_id)
             except (ImportError, AttributeError):
                 return None
@@ -705,20 +905,29 @@ def _wrap_feishu_adapter_send_clarify(orig_send_clarify: Callable) -> Callable:
                 exc_info=True,
             )
             return await orig_send_clarify(
-                self_feishu, chat_id, question, choices, clarify_id, session_key,
-                metadata=metadata, **kwargs
+                self_feishu,
+                chat_id,
+                question,
+                choices,
+                clarify_id,
+                session_key,
+                metadata=metadata,
+                **kwargs,
             )
 
     return _intercepted_send_clarify
+
 
 def _safe_action_value_repr(action_value: Any) -> str:
     """Safely repr an action_value dict for logging (truncated, no secrets)."""
     try:
         import json
+
         s = json.dumps(action_value, ensure_ascii=False, default=str)
         return s[:200]
     except Exception:
         return repr(action_value)[:200]
+
 
 def _wrap_handle_card_action_event(original_method: Callable) -> Callable:
     """Wrap ``FeishuAdapter._handle_card_action_event`` — the REAL interception point."""
@@ -730,7 +939,8 @@ def _wrap_handle_card_action_event(original_method: Callable) -> Callable:
 
         clarify_action = (
             action_value.get("hermes_clarify_action")
-            if isinstance(action_value, dict) else None
+            if isinstance(action_value, dict)
+            else None
         )
 
         if clarify_action:
@@ -739,7 +949,11 @@ def _wrap_handle_card_action_event(original_method: Callable) -> Callable:
             # 唯一拦截主链路（生产 E2E 6/6 全走此路径）。旧日志里的
             # "SDK stale bound method path — wrapper bypassed" 描述的是
             # v1.5.0 之前的废弃架构，误导读者以为降级路径被触发。
-            _cid = action_value.get("clarify_id", "") if isinstance(action_value, dict) else ""
+            _cid = (
+                action_value.get("clarify_id", "")
+                if isinstance(action_value, dict)
+                else ""
+            )
             _logger.info(
                 "HLS: clarify card action %r received — handling clarify "
                 "resolution (main interception path), clarify_id=%s",
@@ -775,6 +989,7 @@ def _wrap_handle_card_action_event(original_method: Callable) -> Callable:
         return  # suppress
 
     return _wrapped
+
 
 async def _schedule_confirm_card(*, cid: str) -> None:
     """Server-side card update: soft-lock → hard-lock (confirmed state)."""
@@ -827,7 +1042,8 @@ async def _schedule_confirm_card(*, cid: str) -> None:
             return
 
         card_data = build_clarify_confirmed_card(
-            question=question, selected=selected,
+            question=question,
+            selected=selected,
         )
         await ctrl._client.update_card(card_msg_id, card_data)
 
@@ -850,6 +1066,7 @@ async def _schedule_confirm_card(*, cid: str) -> None:
             exc_info=True,
         )
 
+
 def _handle_clarify_card_action(
     adapter_instance,
     data: Any,
@@ -869,18 +1086,23 @@ def _handle_clarify_card_action(
             return None
         return P2CardActionTriggerResponse()
 
-    def _submitted_card_response(selected_text: str, choices_list: list[str] | None, q: str, cid: str):
+    def _submitted_card_response(
+        selected_text: str, choices_list: list[str] | None, q: str, cid: str
+    ):
         """Build a CallBackCard showing the soft-lock submitted state."""
         if P2CardActionTriggerResponse is None or CallBackCard is None:
             return _empty_response()
         from ..cardkit import build_clarify_submitted_card
+
         # v1.7.0: build_clarify_submitted_card has NO `choices` parameter —
         # the old call passed one and raised TypeError on EVERY clarify
         # select/input/retry action (caught + logged upstream, but the
         # submitted-state response was never built and the log noise made
         # every clarify click look like a failure).
         card_data = build_clarify_submitted_card(
-            question=q, selected=selected_text, clarify_id=cid,
+            question=q,
+            selected=selected_text,
+            clarify_id=cid,
         )
         response = P2CardActionTriggerResponse()
         card = CallBackCard()
@@ -937,7 +1159,10 @@ def _handle_clarify_card_action(
         with _clarify_lock:
             stored_selection = _clarify_selections.get(clarify_id, "")
         if not stored_selection:
-            _logger.debug("clarify card: retry but no stored selection for clarify_id=%s", (clarify_id or "?")[:12])
+            _logger.debug(
+                "clarify card: retry but no stored selection for clarify_id=%s",
+                (clarify_id or "?")[:12],
+            )
             return _empty_response()
 
         _logger.info(
@@ -959,7 +1184,8 @@ def _handle_clarify_card_action(
                     await _schedule_confirm_card(cid=clarify_id)
 
                 safe_schedule_threadsafe(
-                    _do_retry_resolve(), loop,
+                    _do_retry_resolve(),
+                    loop,
                     logger=_logger,
                     log_message="clarify card: failed to schedule retry resolve",
                     log_level=logging.WARNING,
@@ -968,13 +1194,17 @@ def _handle_clarify_card_action(
                 _logger.warning("clarify card: retry resolve scheduling failed: %s", e)
                 try:
                     from tools.clarify_gateway import resolve_gateway_clarify
+
                     resolve_gateway_clarify(clarify_id, stored_selection)
                 except (ImportError, Exception) as e2:
-                    _logger.warning("clarify card: synchronous retry resolve also failed: %s", e2)
+                    _logger.warning(
+                        "clarify card: synchronous retry resolve also failed: %s", e2
+                    )
         else:
             # No event loop — synchronous fallback
             try:
                 from tools.clarify_gateway import resolve_gateway_clarify
+
                 resolve_gateway_clarify(clarify_id, stored_selection)
             except (ImportError, Exception) as e:
                 _logger.warning("clarify card: synchronous retry resolve failed: %s", e)
@@ -984,7 +1214,9 @@ def _handle_clarify_card_action(
 
     # ── Handle select action (dropdown choice) ──
     if clarify_action == "select":
-        selected_option = str(getattr(getattr(event, "action", None), "option", "") or "")
+        selected_option = str(
+            getattr(getattr(event, "action", None), "option", "") or ""
+        )
 
         # Predefined choice selected → resolve
         with _clarify_lock:
@@ -1035,29 +1267,38 @@ def _handle_clarify_card_action(
                     await _schedule_confirm_card(cid=clarify_id)
 
                 safe_schedule_threadsafe(
-                    _do_resolve(), loop,
+                    _do_resolve(),
+                    loop,
                     logger=_logger,
                     log_message="clarify card: failed to schedule resolve_gateway_clarify",
                     log_level=logging.WARNING,
                 )
             except (ImportError, Exception) as e:
-                _logger.warning("clarify card: resolve_gateway_clarify scheduling failed: %s", e)
+                _logger.warning(
+                    "clarify card: resolve_gateway_clarify scheduling failed: %s", e
+                )
                 # Try synchronous fallback
                 try:
                     from tools.clarify_gateway import resolve_gateway_clarify
+
                     resolve_gateway_clarify(clarify_id, choice_text)
                 except (ImportError, Exception) as e2:
-                    _logger.warning("clarify card: synchronous resolve also failed: %s", e2)
+                    _logger.warning(
+                        "clarify card: synchronous resolve also failed: %s", e2
+                    )
         else:
             # No event loop — synchronous fallback
             try:
                 from tools.clarify_gateway import resolve_gateway_clarify
+
                 resolve_gateway_clarify(clarify_id, choice_text)
             except (ImportError, Exception) as e:
                 _logger.warning("clarify card: synchronous resolve failed: %s", e)
 
         # Return submitted card (soft lock with retry button) — don't cleanup yet
-        return _submitted_card_response(choice_text, choices_list or None, question, clarify_id)
+        return _submitted_card_response(
+            choice_text, choices_list or None, question, clarify_id
+        )
 
     # ── Handle input_submit action (text input via Enter key) ──
     if clarify_action == "input_submit":
@@ -1065,7 +1306,10 @@ def _handle_clarify_card_action(
         input_text = str(getattr(action_obj, "input_value", "") or "").strip()
 
         if not input_text:
-            _logger.debug("clarify card: empty input submitted for clarify_id=%s", (clarify_id or "?")[:12])
+            _logger.debug(
+                "clarify card: empty input submitted for clarify_id=%s",
+                (clarify_id or "?")[:12],
+            )
             return _empty_response()
 
         _logger.info(
@@ -1091,22 +1335,29 @@ def _handle_clarify_card_action(
                     await _schedule_confirm_card(cid=clarify_id)
 
                 safe_schedule_threadsafe(
-                    _do_resolve_input(), loop,
+                    _do_resolve_input(),
+                    loop,
                     logger=_logger,
                     log_message="clarify card: failed to schedule resolve_gateway_clarify",
                     log_level=logging.WARNING,
                 )
             except (ImportError, Exception) as e:
-                _logger.warning("clarify card: resolve_gateway_clarify scheduling failed: %s", e)
+                _logger.warning(
+                    "clarify card: resolve_gateway_clarify scheduling failed: %s", e
+                )
                 try:
                     from tools.clarify_gateway import resolve_gateway_clarify
+
                     resolve_gateway_clarify(clarify_id, input_text)
                 except (ImportError, Exception) as e2:
-                    _logger.warning("clarify card: synchronous resolve also failed: %s", e2)
+                    _logger.warning(
+                        "clarify card: synchronous resolve also failed: %s", e2
+                    )
         else:
             # No event loop — synchronous fallback
             try:
                 from tools.clarify_gateway import resolve_gateway_clarify
+
                 resolve_gateway_clarify(clarify_id, input_text)
             except (ImportError, Exception) as e:
                 _logger.warning("clarify card: synchronous resolve failed: %s", e)
@@ -1122,7 +1373,10 @@ def _handle_clarify_card_action(
         input_text = str(form_value.get("clarify_input", "") or "").strip()
 
         if not input_text:
-            _logger.debug("clarify card: empty button submit for clarify_id=%s", (clarify_id or "?")[:12])
+            _logger.debug(
+                "clarify card: empty button submit for clarify_id=%s",
+                (clarify_id or "?")[:12],
+            )
             return _empty_response()
 
         _logger.info(
@@ -1148,22 +1402,29 @@ def _handle_clarify_card_action(
                     await _schedule_confirm_card(cid=clarify_id)
 
                 safe_schedule_threadsafe(
-                    _do_resolve_button(), loop,
+                    _do_resolve_button(),
+                    loop,
                     logger=_logger,
                     log_message="clarify card: failed to schedule resolve_gateway_clarify",
                     log_level=logging.WARNING,
                 )
             except (ImportError, Exception) as e:
-                _logger.warning("clarify card: resolve_gateway_clarify scheduling failed: %s", e)
+                _logger.warning(
+                    "clarify card: resolve_gateway_clarify scheduling failed: %s", e
+                )
                 try:
                     from tools.clarify_gateway import resolve_gateway_clarify
+
                     resolve_gateway_clarify(clarify_id, input_text)
                 except (ImportError, Exception) as e2:
-                    _logger.warning("clarify card: synchronous resolve also failed: %s", e2)
+                    _logger.warning(
+                        "clarify card: synchronous resolve also failed: %s", e2
+                    )
         else:
             # No event loop — synchronous fallback
             try:
                 from tools.clarify_gateway import resolve_gateway_clarify
+
                 resolve_gateway_clarify(clarify_id, input_text)
             except (ImportError, Exception) as e:
                 _logger.warning("clarify card: synchronous resolve failed: %s", e)

@@ -29,6 +29,7 @@ try:
 except Exception:
     import sys
     import traceback
+
     traceback.print_exc(file=sys.stderr)
 
 # ── 从环境变量读取配置 ──
@@ -36,7 +37,8 @@ except Exception:
 # v1.7.0 (R5-08): friendly validation — raw os.environ[...] raised a bare
 # KeyError with no hint about WHICH variable is missing or where to set it.
 _missing_env = [
-    _name for _name in ("FEISHU_WEBHOOK", "FEISHU_SECRET")
+    _name
+    for _name in ("FEISHU_WEBHOOK", "FEISHU_SECRET")
     if not os.environ.get(_name, "").strip()
 ]
 if _missing_env:
@@ -189,6 +191,7 @@ import re as _re  # noqa: E402 — 脚本式布局，非包入口
 def _strip_mr_prefix(msg: str) -> str:
     return _re.sub(r"^!\d+\s+", "", msg)
 
+
 _seen_bare: dict[str, str] = {}
 for line in commit_lines:
     bare = _strip_mr_prefix(line)
@@ -208,9 +211,15 @@ if commit_lines:
 
 # ── 构建飞书卡片（v1.1.1 美化版）──
 
+
 def _metric_col(label: str, value: str, color: str = "default") -> dict:
     """构建一个指标列."""
-    color_map = {"default": None, "green": "green", "red": "red", "orange": "orange-300"}
+    color_map = {
+        "default": None,
+        "green": "green",
+        "red": "red",
+        "orange": "orange-300",
+    }
     font_color = color_map.get(color)
     if font_color:
         value_md = f"<font color='{font_color}'>**{value}**</font>"
@@ -231,7 +240,12 @@ def _fold(title, elements_content, *, expanded=False, border_color="grey"):
         "tag": "collapsible_panel",
         "expanded": expanded,
         "header": {
-            "title": {"tag": "plain_text", "content": title, "text_color": "grey", "text_size": "notation"},
+            "title": {
+                "tag": "plain_text",
+                "content": title,
+                "text_color": "grey",
+                "text_size": "notation",
+            },
             "vertical_align": "center",
             "icon": {
                 "tag": "standard_icon",
@@ -257,15 +271,30 @@ elements = [
         "tag": "column_set",
         "flex_mode": "stretch",
         "columns": [
-            {"tag": "column", "width": "weighted", "weight": 1, "elements": [
-                _metric_col("版本", f"v{PLUGIN_VERSION}", "default"),
-            ]},
-            {"tag": "column", "width": "weighted", "weight": 1, "elements": [
-                _metric_col("同步", "✅ 已推送", "green"),
-            ]},
-            {"tag": "column", "width": "weighted", "weight": 1, "elements": [
-                _metric_col("触发", trigger_label.split("（")[0], "default"),
-            ]},
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [
+                    _metric_col("版本", f"v{PLUGIN_VERSION}", "default"),
+                ],
+            },
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [
+                    _metric_col("同步", "✅ 已推送", "green"),
+                ],
+            },
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 1,
+                "elements": [
+                    _metric_col("触发", trigger_label.split("（")[0], "default"),
+                ],
+            },
         ],
     },
     {"tag": "hr"},
@@ -283,11 +312,13 @@ elements = [
 if changed_files_display:
     elements.append({"tag": "hr"})
     file_lines = "\n".join(f"  • `{f}`" for f in changed_files_display)
-    elements.append(_fold(
-        f"🔄 变更文件 ({len(changed_files)})",
-        file_lines,
-        expanded=len(changed_files) <= 3,  # ≤3 个默认展开
-    ))
+    elements.append(
+        _fold(
+            f"🔄 变更文件 ({len(changed_files)})",
+            file_lines,
+            expanded=len(changed_files) <= 3,  # ≤3 个默认展开
+        )
+    )
 
 # ── 提交说明（折叠面板）──
 if commit_summary:
@@ -301,21 +332,25 @@ error_items = [s for s in failed_summary if s.startswith("⚠️")]
 
 if failure_items:
     elements.append({"tag": "hr"})
-    elements.append(_fold(
-        f"❌ 失败详情 ({total_failures})",
-        "\n".join(failure_items),
-        expanded=True,  # 失败详情默认展开
-        border_color="red",
-    ))
+    elements.append(
+        _fold(
+            f"❌ 失败详情 ({total_failures})",
+            "\n".join(failure_items),
+            expanded=True,  # 失败详情默认展开
+            border_color="red",
+        )
+    )
 
 if error_items or total_errors > 0:
     elements.append({"tag": "hr"})
-    elements.append(_fold(
-        f"🚫 阻塞详情 ({total_errors})",
-        "\n".join(error_items) if error_items else "  • 解析报告时出错",
-        expanded=True,  # 阻塞详情默认展开
-        border_color="red",
-    ))
+    elements.append(
+        _fold(
+            f"🚫 阻塞详情 ({total_errors})",
+            "\n".join(error_items) if error_items else "  • 解析报告时出错",
+            expanded=True,  # 阻塞详情默认展开
+            border_color="red",
+        )
+    )
 
 # ── 跳过的测试（折叠面板，有数据才展示）──
 if skipped_details:
@@ -323,19 +358,23 @@ if skipped_details:
     display_skips = skipped_details[:10]
     if len(skipped_details) > 10:
         display_skips.append(f"  • ... 共 {len(skipped_details)} 条跳过")
-    elements.append(_fold(
-        f"⏭️ 跳过的测试 ({total_skipped})",
-        "\n".join(display_skips),
-        expanded=False,
-    ))
+    elements.append(
+        _fold(
+            f"⏭️ 跳过的测试 ({total_skipped})",
+            "\n".join(display_skips),
+            expanded=False,
+        )
+    )
 
 elements.append({"tag": "hr"})
-elements.append({
-    "tag": "button",
-    "text": {"tag": "plain_text", "content": "🔗 查看 Actions 详情"},
-    "url": run_url,
-    "type": "primary",
-})
+elements.append(
+    {
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": "🔗 查看 Actions 详情"},
+        "url": run_url,
+        "type": "primary",
+    }
+)
 
 payload = {
     "timestamp": timestamp,

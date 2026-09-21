@@ -119,8 +119,10 @@ class TestInitVersion:
             return original_read_text(self, *args, **kwargs)
 
         try:
-            with patch.object(Path, "exists", mock_exists), \
-                 patch.object(Path, "read_text", mock_read_text):
+            with (
+                patch.object(Path, "exists", mock_exists),
+                patch.object(Path, "read_text", mock_read_text),
+            ):
                 mod = _reload_hls()
             assert mod.__version__ == "unknown"
         finally:
@@ -185,8 +187,10 @@ class TestSetupVersion:
                 return "name: test\ndescription: no version here\n"
             return original_read_text(self, *args, **kwargs)
 
-        with patch.object(Path, "exists", mock_exists), \
-             patch.object(Path, "read_text", mock_read_text):
+        with (
+            patch.object(Path, "exists", mock_exists),
+            patch.object(Path, "read_text", mock_read_text),
+        ):
             with pytest.raises(ValueError, match="No 'version:' field found"):
                 self._load_setup()
 
@@ -207,8 +211,10 @@ class TestSetupVersion:
                 return 'name: test\nversion: "1.2.3"\ndescription: test\n'
             return original_read_text(self, *args, **kwargs)
 
-        with patch.object(Path, "exists", mock_exists), \
-             patch.object(Path, "read_text", mock_read_text):
+        with (
+            patch.object(Path, "exists", mock_exists),
+            patch.object(Path, "read_text", mock_read_text),
+        ):
             mock_setup = self._load_setup()
 
         mock_setup.assert_called_once_with(version="1.2.3")

@@ -45,11 +45,15 @@ class TestFooterFields:
     _DEFAULT_FIELDS = [["status", "elapsed", "model", "cost", "compression_exhausted"]]
 
     def test_normal_2d_fields(self) -> None:
-        cfg = _make_config({"hermes_lark_streaming": {"footer": {"fields": [["a", "b"], ["c"]]}}})
+        cfg = _make_config(
+            {"hermes_lark_streaming": {"footer": {"fields": [["a", "b"], ["c"]]}}}
+        )
         assert cfg.footer_fields == [["a", "b"], ["c"]]
 
     def test_1d_auto_wrapped(self) -> None:
-        cfg = _make_config({"hermes_lark_streaming": {"footer": {"fields": ["status", "elapsed"]}}})
+        cfg = _make_config(
+            {"hermes_lark_streaming": {"footer": {"fields": ["status", "elapsed"]}}}
+        )
         assert cfg.footer_fields == [["status", "elapsed"]]
 
     def test_empty_fields_returns_default(self) -> None:
@@ -108,7 +112,9 @@ class TestCardDurationSec:
 class TestFeishuAppId:
     def test_from_env(self) -> None:
         cfg = _make_config({})
-        with patch.dict(os.environ, {"FEISHU_APP_ID": "env_id", "FEISHU_APP_SECRET": "env_secret"}):
+        with patch.dict(
+            os.environ, {"FEISHU_APP_ID": "env_id", "FEISHU_APP_SECRET": "env_secret"}
+        ):
             assert cfg.feishu_app_id == "env_id"
 
     def test_from_config(self) -> None:
@@ -129,14 +135,27 @@ class TestFeishuBaseURL:
             assert cfg.feishu_base_url == "https://open.feishu.cn/open-apis"
 
     def test_custom_url_from_config(self) -> None:
-        cfg = _make_config({"feishu": {"app_id": "id", "app_secret": "s", "base_url": "https://custom.com"}})
+        cfg = _make_config(
+            {
+                "feishu": {
+                    "app_id": "id",
+                    "app_secret": "s",
+                    "base_url": "https://custom.com",
+                }
+            }
+        )
         with patch.dict(os.environ, {}, clear=True):
             assert cfg.feishu_base_url == "https://custom.com"
 
     def test_from_env(self) -> None:
         cfg = _make_config({})
         with patch.dict(
-            os.environ, {"FEISHU_APP_ID": "id", "FEISHU_APP_SECRET": "s", "FEISHU_BASE_URL": "https://env.com"}
+            os.environ,
+            {
+                "FEISHU_APP_ID": "id",
+                "FEISHU_APP_SECRET": "s",
+                "FEISHU_BASE_URL": "https://env.com",
+            },
         ):
             assert cfg.feishu_base_url == "https://env.com"
 
@@ -149,11 +168,15 @@ class TestShowReasoning:
         return cfg
 
     def test_platform_level_true(self) -> None:
-        cfg = self._make_reasoning_config({"display": {"platforms": {"feishu": {"show_reasoning": True}}}})
+        cfg = self._make_reasoning_config(
+            {"display": {"platforms": {"feishu": {"show_reasoning": True}}}}
+        )
         assert cfg.show_reasoning is True
 
     def test_platform_level_false(self) -> None:
-        cfg = self._make_reasoning_config({"display": {"platforms": {"feishu": {"show_reasoning": False}}}})
+        cfg = self._make_reasoning_config(
+            {"display": {"platforms": {"feishu": {"show_reasoning": False}}}}
+        )
         assert cfg.show_reasoning is False
 
     def test_global_fallback_true(self) -> None:
@@ -177,16 +200,20 @@ class TestShowReasoning:
         assert cfg.show_reasoning is False
 
     def test_feishu_section_missing_key(self) -> None:
-        cfg = self._make_reasoning_config({"display": {"platforms": {"feishu": {"other": True}}}})
+        cfg = self._make_reasoning_config(
+            {"display": {"platforms": {"feishu": {"other": True}}}}
+        )
         assert cfg.show_reasoning is False
 
     def test_platform_takes_priority_over_global(self) -> None:
-        cfg = self._make_reasoning_config({
-            "display": {
-                "platforms": {"feishu": {"show_reasoning": False}},
-                "show_reasoning": True,
+        cfg = self._make_reasoning_config(
+            {
+                "display": {
+                    "platforms": {"feishu": {"show_reasoning": False}},
+                    "show_reasoning": True,
+                }
             }
-        })
+        )
         assert cfg.show_reasoning is False
 
     def test_no_display_section(self) -> None:
@@ -196,8 +223,12 @@ class TestShowReasoning:
 
 class TestPlatformCfg:
     def test_env_takes_priority(self) -> None:
-        cfg = _make_config({"feishu": {"app_id": "config_id", "app_secret": "config_secret"}})
-        with patch.dict(os.environ, {"FEISHU_APP_ID": "env_id", "FEISHU_APP_SECRET": "env_secret"}):
+        cfg = _make_config(
+            {"feishu": {"app_id": "config_id", "app_secret": "config_secret"}}
+        )
+        with patch.dict(
+            os.environ, {"FEISHU_APP_ID": "env_id", "FEISHU_APP_SECRET": "env_secret"}
+        ):
             result = cfg._platform_cfg()
             assert result["app_id"] == "env_id"
 
@@ -222,6 +253,8 @@ class TestPlatformCfg:
         cfg = _make_config({})
         with patch.dict(os.environ, {}, clear=True):
             assert cfg._platform_cfg() == {}
+
+
 class TestLinear:
     def test_linear_true(self) -> None:
         cfg = _make_config({"hermes_lark_streaming": {"linear": True}})
@@ -252,11 +285,15 @@ class TestPanelExpanded:
 
 class TestStreamingPanelExpanded:
     def test_streaming_panel_expanded_true(self) -> None:
-        cfg = _make_config({"hermes_lark_streaming": {"streaming_panel_expanded": True}})
+        cfg = _make_config(
+            {"hermes_lark_streaming": {"streaming_panel_expanded": True}}
+        )
         assert cfg.streaming_panel_expanded is True
 
     def test_streaming_panel_expanded_false(self) -> None:
-        cfg = _make_config({"hermes_lark_streaming": {"streaming_panel_expanded": False}})
+        cfg = _make_config(
+            {"hermes_lark_streaming": {"streaming_panel_expanded": False}}
+        )
         assert cfg.streaming_panel_expanded is False
 
     def test_streaming_panel_expanded_missing_defaults_false(self) -> None:
@@ -280,6 +317,8 @@ class TestPrintStrategy:
     def test_print_strategy_invalid_defaults_delay(self) -> None:
         cfg = _make_config({"hermes_lark_streaming": {"print_strategy": "invalid"}})
         assert cfg.print_strategy == "delay"
+
+
 class TestGetHermesConfigPath:
     """_get_hermes_config_path() 动态路径解析测试 — 多 Profile 场景."""
 
@@ -298,9 +337,14 @@ class TestGetHermesConfigPath:
 
     def test_multi_profile_path(self) -> None:
         """多 Profile 场景：HERMES_HOME 指向 profile 目录."""
-        with patch.dict(os.environ, {"HERMES_HOME": str(Path.home() / ".hermes" / "profiles" / "bailu")}):
+        with patch.dict(
+            os.environ,
+            {"HERMES_HOME": str(Path.home() / ".hermes" / "profiles" / "bailu")},
+        ):
             path = _get_hermes_config_path()
-            assert path == Path.home() / ".hermes" / "profiles" / "bailu" / "config.yaml"
+            assert (
+                path == Path.home() / ".hermes" / "profiles" / "bailu" / "config.yaml"
+            )
 
     def test_path_changes_with_env(self) -> None:
         """每次调用都重新读取环境变量，不同 HERMES_HOME 返回不同路径."""
@@ -311,7 +355,6 @@ class TestGetHermesConfigPath:
         assert path_a != path_b
         assert str(path_a).startswith("/path/a")
         assert str(path_b).startswith("/path/b")
-
 
     def test_flush_interval_ms_default(self) -> None:
         """flush_interval_ms 默认 200ms (v1.3.1: 恢复 v1.2.1 P1-01 的默认值)."""
@@ -328,13 +371,25 @@ class TestGetHermesConfigPath:
         from pathlib import Path
 
         import yaml
+
         config_path = Path(str(tmp_path)) / "config.yaml"
-        config_path.write_text(yaml.dump({
-            "hermes_lark_streaming": {"enabled": True, "flush_interval_ms": 300},
-        }))
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "hermes_lark_streaming": {
+                        "enabled": True,
+                        "flush_interval_ms": 300,
+                    },
+                }
+            )
+        )
         # Override config path
         from unittest.mock import patch
-        with patch("hermes_lark_streaming.config.reader._get_hermes_config_path", return_value=config_path):
+
+        with patch(
+            "hermes_lark_streaming.config.reader._get_hermes_config_path",
+            return_value=config_path,
+        ):
             cfg = Config()
             assert cfg.flush_interval_ms == 300.0
             assert cfg.flush_interval_sec == 0.3
@@ -345,18 +400,38 @@ class TestGetHermesConfigPath:
         from unittest.mock import patch
 
         import yaml
-        config_path = Path(str(tmp_path)) / "config.yaml"
-        config_path.write_text(yaml.dump({
-            "hermes_lark_streaming": {"enabled": True, "flush_interval_ms": 30},
-        }))
-        with patch("hermes_lark_streaming.config.reader._get_hermes_config_path", return_value=config_path):
-            cfg = Config()
-            assert cfg.flush_interval_ms == 70.0  # clamped to min (≈ official print_frequency_ms)
 
-        config_path.write_text(yaml.dump({
-            "hermes_lark_streaming": {"enabled": True, "flush_interval_ms": 5000},
-        }))
-        with patch("hermes_lark_streaming.config.reader._get_hermes_config_path", return_value=config_path):
+        config_path = Path(str(tmp_path)) / "config.yaml"
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "hermes_lark_streaming": {"enabled": True, "flush_interval_ms": 30},
+                }
+            )
+        )
+        with patch(
+            "hermes_lark_streaming.config.reader._get_hermes_config_path",
+            return_value=config_path,
+        ):
+            cfg = Config()
+            assert (
+                cfg.flush_interval_ms == 70.0
+            )  # clamped to min (≈ official print_frequency_ms)
+
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "hermes_lark_streaming": {
+                        "enabled": True,
+                        "flush_interval_ms": 5000,
+                    },
+                }
+            )
+        )
+        with patch(
+            "hermes_lark_streaming.config.reader._get_hermes_config_path",
+            return_value=config_path,
+        ):
             # v1.2.0: Config 单例后，需 reload 清缓存才能读新配置
             cfg.reload()
             cfg2 = Config()  # 单例，与 cfg 同一实例
@@ -369,6 +444,7 @@ class TestConfigSingleton:
     def test_singleton_same_instance(self) -> None:
         """Config() 多次调用返回同一实例."""
         from hermes_lark_streaming.config.reader import Config
+
         cfg1 = Config()
         cfg2 = Config()
         assert cfg1 is cfg2
@@ -388,28 +464,43 @@ class TestConfigSingleton:
         from hermes_lark_streaming.config.reader import Config
 
         config_path = Path(str(tmp_path)) / "config.yaml"
-        config_path.write_text(yaml.dump({
-            "hermes_lark_streaming": {"enabled": False},
-        }))
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "hermes_lark_streaming": {"enabled": False},
+                }
+            )
+        )
 
-        with patch("hermes_lark_streaming.config.reader._get_hermes_config_path", return_value=config_path):
+        with patch(
+            "hermes_lark_streaming.config.reader._get_hermes_config_path",
+            return_value=config_path,
+        ):
             # controller 持有的实例（模拟 StreamCardController.__init__）
             ctrl_cfg = Config()
             assert ctrl_cfg.enabled is False
 
         # 改配置文件
-        config_path.write_text(yaml.dump({
-            "hermes_lark_streaming": {"enabled": True},
-        }))
+        config_path.write_text(
+            yaml.dump(
+                {
+                    "hermes_lark_streaming": {"enabled": True},
+                }
+            )
+        )
 
         # 模拟 /aowen config reload（aowen 新建 Config 调 reload）
-        with patch("hermes_lark_streaming.config.reader._get_hermes_config_path", return_value=config_path):
+        with patch(
+            "hermes_lark_streaming.config.reader._get_hermes_config_path",
+            return_value=config_path,
+        ):
             reload_cfg = Config()  # 单例：与 ctrl_cfg 同一实例
             reload_cfg.reload()
 
             # controller 持有的实例现在应读到新值
-            assert ctrl_cfg.enabled is True, \
+            assert ctrl_cfg.enabled is True, (
                 "reload 后 controller 持有实例的缓存应被清除，读到新配置"
+            )
 
 
 class TestPrintStep:
@@ -445,13 +536,15 @@ class TestConfigBackwardCompatV150:
 
     def test_stale_header_enabled_ignored(self, tmp_path: object) -> None:
         """Config with stale header.enabled should not crash on access."""
-        cfg = _make_config({
-            "hermes_lark_streaming": {
-                "enabled": True,
-                "linear": True,
-                "header": {"enabled": True},  # stale, should be ignored
+        cfg = _make_config(
+            {
+                "hermes_lark_streaming": {
+                    "enabled": True,
+                    "linear": True,
+                    "header": {"enabled": True},  # stale, should be ignored
+                }
             }
-        })
+        )
         # Accessing deleted header_enabled should raise AttributeError (safe)
         with pytest.raises(AttributeError):
             _ = cfg.header_enabled
