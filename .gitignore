@@ -13,3 +13,10 @@ tests/samples/
 .deps/
 .hermes-last-release
 worklog.md
+
+.conda/
+.venv/
+.codebuddy/
+.vscode/
+.vscode-server/
+generated-images/
