@@ -1,3 +1,47 @@
+## v1.8.7 (2026-09-22)
+
+v1.8.6 生产 hotfix — `TypeError: object FeishuClient can't be used in 'await' expression`，全部 profile 的卡片创建失败（连 default 一起），回落纯文本。
+
+| 类型 | 问题 | 原因 | 修复 |
+|------|------|------|------|
+| 🐛 Bug Fix (P0) | 全部卡片创建失败 | `_ensure_init` 预热行误对**同步**方法 `client_for_current_home()` 加 `await`（它返回 FeishuClient 实例非协程）→ TypeError → 每条消息的 `_do_create_linear_card` / `_do_gateway_deliver` 全灭 | 去掉 await；附注释说明该方法是纯同步构建 lark SDK 客户端 (`controller/core.py`) |
+| 🐛 Bug Fix (P1) | **多副本 TOCTOU 双 wrap 竞态**：生产日志实证 default/coder 两副本 controller 同时活跃——两个副本的延迟补丁线程在 gateway.run 加载后几乎同时醒来，各自模块级 `_gw_runner_patched` 均为 False，裸 sentinel 检查与 wrap 之间存在竞态窗口 → 双副本嵌套 wrap → 双卡/状态分裂 | sentinel 检查与 wrap 非原子 | `GatewayRunner` 类级锁 `_hls_patch_lock`（挂在共享类上，跨副本互斥），sentinel 检查+wrap 全部移入锁内 (`patching/__init__.py`) |
+| 🧪 Test | 新增 3 个回归测试 | 防回归 | `_ensure_init` 端到端跑通（initialized=True + 路由代理落位 + 池预热出正确 app_id）；幂等性（二次调用不重建池）；并发双副本 apply 只 wrap 一层（`__wrapped__` 直达原方法断言） |
+
+**教训（连续两次同类）**：v1.8.5/1.8.6 两轮 hotfix 均为"wrapper/init 层的机械错误"，helper 级单测拦不住——v1.8.7 起凡新增执行层代码（wrapper/ensure_init）必须配端到端调用测试。
+
+## v1.8.6 (2026-09-22)
+
+v1.8.5 生产 hotfix — `AttributeError: 'function' object has no attribute 'reset'`，agent 全量回复失败（hermes 把异常转成错误字符串返回）。
+
+| 类型 | 问题 | 原因 | 修复 |
+|------|------|------|------|
+| 🐛 Bug Fix (P0) | token 式恢复调用了错误的 reset 目标 | `_wrap_handle_message` / `_wrap_cron_deliver` 把 `.reset()` 调在**普通函数** `set_turn_home` 上（reset 属于 ContextVar `_TURN_HOME`），且 `set_turn_home` 旧实现不返回 token | `set_turn_home` 返回 ContextVar token + 新增 `reset_turn_home(token)`（None token 安全降级解绑）；两处调用点改走 `reset_turn_home` (`config/reader.py`, `patching/gateway.py`) |
+| 🧪 Test | 新增 2 个回归测试 | 防回归 | token 往返（set→reset→恢复外层值/None token 降级）；`_wrap_handle_message` 端到端调用不抛 AttributeError 且 task context 无 home 泄漏 |
+
+## v1.8.5 (2026-09-22)
+
+multiplex 多 bot 支持 — v1.8.4 部署后生产验证暴露的第二层结构性缺陷：三 profile 绑三个飞书 bot（小爱马/虾仔/爱老师各自独立应用）时，仅 default（网关启动 profile）有流式卡，coder/research 完全无卡。
+
+| 类型 | 问题/功能 | 原因 | 修复/说明 |
+|------|-----------|------|-----------|
+| 🐛 Bug Fix (P0) | **多 bot 下非启动 profile 无流式卡**：v1.8.4 首副本胜出去重后，胜出副本的 FeishuClient 凭据在 init 时定死（读进程 env 的 `HERMES_HOME`，即网关启动 profile）；其余 profile 的卡片用错 bot 身份 reply 到别的 bot 收到的 om_ 消息 → 必然失败 → 无卡。v1.8.3 时代因每 profile 独立网关进程（各自 env 正确）而从未暴露 | 凭据解析与 hermes multiplex 的 per-turn 路由机制脱节：hermes 用 **ContextVar** 做 HERMES_HOME override（刻意不动 `os.environ`，进程 env 全线程共享），插件读 env 永远看到启动 profile | 三层修复：①`config/reader.py` 新增 `_TURN_HOME` ContextVar + `_TURN_LOCAL` thread-local（wrapper 层绑定，flush 定时器经 asyncio Handle 调度点 context 自然继承、worker 线程由 wrapper 同步维护）+ `feishu_creds_for_home()`（`<home>/config.yaml` feishu 节 → `<home>/.env` → env 兜底，60s TTL）；②`controller/core.py` `_client` 改为 `_RoutingFeishuClient` 代理——30+ 处卡片调用点零改动，每次属性访问按当前 turn home 从 `_ClientPool`（per-home FeishuClient 池）解析对应 bot；③`patching/gateway.py` 四个 wrapper（handle_message/handle_message_with_agent/run_agent/run_background_task/cron_deliver）在 turn 上下文绑定 home、退出解绑（cron 为同步函数用 token 式 set/reset）(`config/reader.py`, `controller/core.py`, `patching/gateway.py`) |
+| 🐛 Bug Fix (P1) | **中断链跨 profile home 透传**：递归中断的新消息可能属于另一 profile，child ctx 盲继承 parent 的 home 会用错 bot | child ctx 未重解析 home | `_wrap_run_agent` child 分支重解析 `current_hermes_home()`（此时 hermes 已切到新消息的 turn 上下文）；parent 恢复路径同步还原 home 绑定 (`patching/gateway.py`) |
+| 🧪 Test | 新增 13 个 multiplex 多 bot 回归测试 `test_v185_multiplex_bots.py` | 防回归 | 凭据解析 7（config.yaml/.env/env 兜底/优先级/无凭据空表/TTL 缓存与过期/多线程缓存安全）+ 池路由 4（per-turn home 路由/池内实例复用/thread-local 绑定/无凭据 env 回退与无凭据抛错）+ 代理 2（按绑定委派/逐次懒解析不定死） |
+
+**执行位覆盖**：event-loop 任务（ContextVar 直接生效）、flush 定时器（asyncio Handle 调度时捕获 context，继承调度点绑定）、worker 线程（hermes 线程池回调 contextvar 不可达——wrapper 与既有 `_thread_local_ctx` 同点维护 thread-local home）。注意事项：插件展示类配置（panel/footer 等）仍读网关启动 profile 的 config.yaml（仅凭据与卡片投递身份按 turn 路由）；若某 profile 配置 `hermes_lark_streaming.enabled: false`，当前按启动 profile 的开关统一判定，per-profile 开关留待后续。
+
+## v1.8.4 (2026-09-22)
+
+multiplex 多副本重复回复卡修复 — hermes multiplex-only 裁决（`gateway_multiplex_mode.py`：一机一网关服务所有 profile，`false` 已退役）下的结构性 bug：default profile 一次聊天出现三条回复卡片。
+
+| 类型 | 问题/功能 | 原因 | 修复/说明 |
+|------|-----------|------|-----------|
+| 🐛 Bug Fix (P1) | **一次聊天 N 条回复卡片**：插件装在多个 profile 的 `plugins/` 目录时（如 default/coder/…），multiplex 网关按 profile home 各自实例化 PluginManager（`plugins.py get_plugin_manager()` 按 home 缓存），每份插件副本是独立模块实例（`plugins_loader._directory_module_name` 对第二个及以后 scope 追加 `__home_<digest>` 后缀）→ 每份副本的 `apply_patches()` 各自执行 | 去重 guard（`_applied` / `_gw_runner_patched`）是**模块级变量**，跨副本失效；共享 `GatewayRunner` 类方法被嵌套 wrap N 次，每层 wrapper 各 fire 一套 hooks → 每个副本各自的 controller（独立 `_sessions` 字典）为同一条消息各建一张流式卡 | wrap 前检查挂在**被 wrap 的共享 callable 上**的 `_hls_wrapped` 哨兵（`_hls_is_wrapped` / `_hls_mark_wrapped`），副本 2/3 跳过 wrap 并打 INFO 日志（"multiplex duplicate copy detected"）——与既有跨副本安全哨兵同构（FeishuAdapter `_hls_patched` class attr、AIAgent `_hls_direct_patched` method attr），全进程只有第一份 wrapper 生效，每条消息一张卡 (`patching/__init__.py`) |
+| 🧪 Test | 新增 5 个 multiplex 去重回归测试 `test_multiplex_dedupe.py` | 防回归 | 哨兵语义 roundtrip、不可设属性对象静默容错、双副本先后 apply 方法只 wrap 一次（身份断言）、未 patch 类无哨兵（防误判）、首副本后 wrapper 确实落位（`__wrapped__` 链 + 哨兵） |
+
+**修复面**: `GatewayRunner._handle_message` / `_handle_message_with_agent` / `_run_agent` / `_run_background_task`、`agent.conversation_loop.run_conversation`、`cron.scheduler._deliver_result` 共 6 个共享目标。AIAgent 直接补丁与 Feishu/RelayAdapter 补丁既有哨兵本就挂在共享对象上，天然跨副本安全，未改动。
+
 ## v1.8.3 (2026-09-09)
 
 健壮性与性能专项 — v1.8.2 全量代码评审落地（5 项健壮性 + 2 项性能），全部 TDD（先复现后修复），1020 单元用例全绿。

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import math
 import os
@@ -17,6 +18,177 @@ _logger = logging.getLogger("hermes_lark_streaming")
 def _get_hermes_config_path() -> Path:
     """动态获取 Hermes 配置文件路径."""
     return Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))) / "config.yaml"
+
+
+# ── v1.8.5: multiplex 多 bot 的 per-turn home 路由 ────────────────────
+#
+# hermes multiplex（一机一网关服务所有 profile）用 ContextVar 做 per-turn
+# 的 HERMES_HOME override（hermes_constants.set_hermes_home_override，刻意
+# 不动 os.environ——进程环境变量全线程共享）。因此插件无法用 os.environ
+# 感知"这条消息属于哪个 profile"，必须走 hermes_constants.get_hermes_home()
+# （contextvar → env → 默认）。
+#
+# 卡片操作分散在 event-loop 任务、flush 定时器（asyncio Handle 在调度时
+# 捕获 context，继承调度点上下文）与 worker 线程（contextvar 不传播）三
+# 种执行位。这里提供两层绑定：
+#   - _TURN_HOME ContextVar：wrapper 在 turn 任务上下文里 set，flush 定时
+#     器经调度点 context 自然继承；
+#   - _TURN_LOCAL thread-local：worker 线程（hermes 线程池回调）由
+#     patching/gateway.py 与 _thread_local_ctx 同步维护。
+# 解析顺序：_TURN_HOME → _TURN_LOCAL → hermes 实时解析 → env。
+
+_TURN_HOME: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "hermes_lark_streaming_turn_home", default=None
+)
+_TURN_LOCAL = threading.local()
+
+
+def set_turn_home(home: str | Path | None) -> "contextvars.Token[str | None] | None":
+    """绑定当前任务上下文的 turn home（None = 解绑，回退实时解析）。
+
+    返回 ContextVar token，供 token 式恢复（`reset_turn_home(token)`）——
+    同步包装器（如 cron _deliver_result）不能裸 set 不 reset，否则 home
+    会泄漏进当前任务的后续代码。
+    """
+    return _TURN_HOME.set(str(home) if home else None)
+
+
+def reset_turn_home(token: "contextvars.Token[str | None] | None") -> None:
+    """按 token 恢复 turn home（token 为 None 时安全降级为解绑）。"""
+    if token is None:
+        _TURN_HOME.set(None)
+        return
+    _TURN_HOME.reset(token)
+
+
+def set_turn_home_thread(home: str | Path | None) -> None:
+    """绑定当前线程的 turn home（worker 线程专用，contextvar 不可达）。"""
+    _TURN_LOCAL.data = str(home) if home else None
+
+
+def current_turn_home() -> str | None:
+    """当前绑定的 turn home（任务 → 线程），未绑定为 None。"""
+    v = _TURN_HOME.get()
+    if v:
+        return v
+    return getattr(_TURN_LOCAL, "data", None)
+
+
+def current_hermes_home() -> Path:
+    """当前生效的 Hermes home：turn 绑定 → hermes 实时解析（contextvar →
+    env → 默认；旧版 hermes 无该模块时退回 env）。"""
+    v = current_turn_home()
+    if v:
+        return Path(v)
+    try:
+        from hermes_constants import get_hermes_home  # type: ignore[import-not-found]
+
+        return get_hermes_home()  # type: ignore[no-any-return]
+    except ImportError:
+        return Path(
+            os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))
+        )
+
+
+def _read_env_file(path: Path) -> dict[str, str]:
+    """极简 .env 解析：KEY=VALUE / # 注释 / 引号剥除。失败返回空表。"""
+    out: dict[str, str] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key:
+                out[key] = val
+    except (OSError, UnicodeDecodeError):
+        pass
+    return out
+
+
+_CRED_CACHE: dict[str, tuple[dict[str, str], float]] = {}
+_CRED_CACHE_TTL = 60.0  # 运行时可变凭据缓存 TTL（与 _RELOAD_CACHE_TTL 对齐）
+_CRED_LOCK = threading.Lock()
+
+
+def feishu_creds_for_home(home: Path | None) -> dict[str, str]:
+    """解析指定 profile home 的飞书凭据（v1.8.5 multiplex 多 bot）。
+
+    解析顺序（三段）：
+      1. ``<home>/config.yaml`` 的 feishu/lark 节（节内 app_id 优先）；
+      2. ``<home>/.env`` 的 FEISHU_APP_ID/LARK_APP_ID 等；
+      3. home 为 None（env 兜底路径）时走进程 env / 进程 home 的 config.yaml。
+
+    返回 {"app_id", "app_secret", "base_url"?, "domain"?}；解析不到凭据
+    返回 {}。带 60s TTL 缓存（keyed by home 路径串），凭据轮换后
+    ``/aowen config reload`` 或 TTL 过期生效。
+
+    安全性：secret 只在内存/缓存流转，日志侧由 feishu/client.py 的
+    app_secret 掩码规则兜底，本函数绝不打日志。
+    """
+    cache_key = str(home) if home is not None else "__env__"
+    now = time.monotonic()
+    with _CRED_LOCK:
+        hit = _CRED_CACHE.get(cache_key)
+        if hit is not None and now - hit[1] < _CRED_CACHE_TTL:
+            return dict(hit[0])
+
+    creds: dict[str, str] = {}
+
+    if home is not None:
+        # 1) <home>/config.yaml 的 feishu/lark 节
+        try:
+            raw = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8")) or {}
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            raw = {}
+        for key in ("feishu", "lark"):
+            sec = raw.get(key)
+            if isinstance(sec, dict) and sec.get("app_id"):
+                creds["app_id"] = str(sec["app_id"])
+                creds["app_secret"] = str(sec.get("app_secret", ""))
+                if sec.get("base_url"):
+                    creds["base_url"] = str(sec["base_url"])
+                break
+        # 2) <home>/.env
+        if not creds.get("app_id"):
+            envf = _read_env_file(home / ".env")
+            app_id = envf.get("FEISHU_APP_ID") or envf.get("LARK_APP_ID") or ""
+            if app_id:
+                creds["app_id"] = app_id
+                creds["app_secret"] = (
+                    envf.get("FEISHU_APP_SECRET") or envf.get("LARK_APP_SECRET") or ""
+                )
+                base = envf.get("FEISHU_BASE_URL") or envf.get("LARK_BASE_URL") or ""
+                if base:
+                    creds["base_url"] = base
+                domain = (envf.get("FEISHU_DOMAIN") or "").strip().lower()
+                if domain:
+                    creds["domain"] = domain
+    else:
+        # env 兜底：进程 env（原 Config 行为）→ 进程 home 的 config.yaml
+        app_id = os.environ.get("FEISHU_APP_ID") or os.environ.get("LARK_APP_ID") or ""
+        if app_id:
+            creds["app_id"] = app_id
+            creds["app_secret"] = (
+                os.environ.get("FEISHU_APP_SECRET")
+                or os.environ.get("LARK_APP_SECRET")
+                or ""
+            )
+            base = os.environ.get("FEISHU_BASE_URL") or os.environ.get("LARK_BASE_URL")
+            if base:
+                creds["base_url"] = base
+            domain = (os.environ.get("FEISHU_DOMAIN") or "").strip().lower()
+            if domain:
+                creds["domain"] = domain
+        else:
+            env_home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
+            creds = feishu_creds_for_home(env_home)
+
+    with _CRED_LOCK:
+        _CRED_CACHE[cache_key] = (dict(creds), now)
+    return dict(creds)
 
 _RELOAD_CACHE_TTL = 60.0  # 运行时可变配置缓存 TTL.
 
@@ -295,7 +467,9 @@ class Config:
                     self._raw = {}
             else:
                 self._raw = {}
-            return self._raw
+            raw = self._raw
+            assert raw is not None  # 上面所有分支均已赋值
+            return raw
 
     def _reload_cached(self) -> dict[str, Any]:
         """带 TTL 缓存的磁盘重读 (运行时可变配置项). 避免高频属性访问读磁盘."""
@@ -317,4 +491,6 @@ class Config:
             else:
                 self._reload_cache = {}
             self._reload_cache_at = now
-            return self._reload_cache
+            cached = self._reload_cache
+            assert cached is not None  # 上面所有分支均已赋值
+            return cached

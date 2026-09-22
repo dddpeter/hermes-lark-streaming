@@ -47,6 +47,102 @@ from ..state.session import (  # noqa: E402 — 置于常量块后系历史布�
 )
 
 
+# ── v1.8.5: multiplex 多 bot 的 per-turn client 路由 ──────────────────
+
+
+class _ClientPool:
+    """按 profile home 缓存 FeishuClient 的进程内池。
+
+    每个客户端的凭据来自 ``config.reader.feishu_creds_for_home(home)``
+    （config.yaml feishu 节 → .env → env 兜底），keyed by home 路径串。
+    凭据轮换经 reader 侧 60s TTL 生效。
+    """
+
+    _DEFAULT_BASE_URL = "https://open.feishu.cn/open-apis"
+    _LARK_BASE_URL = "https://open.larksuite.com/open-apis"
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._clients: dict[str, FeishuClient] = {}
+
+    def _base_url_for(self, creds: dict[str, str]) -> str:
+        base = creds.get("base_url")
+        if base:
+            return base
+        if creds.get("domain") == "lark":
+            return self._LARK_BASE_URL
+        return self._DEFAULT_BASE_URL
+
+    def _build(self, home: Path | None, creds: dict[str, str]) -> FeishuClient:
+        client = FeishuClient(
+            FeishuClientConfig(
+                app_id=creds["app_id"],
+                app_secret=creds["app_secret"],
+                base_url=self._base_url_for(creds),
+            )
+        )
+        _logger.info(
+            "FeishuClient pool: home=%s app_id=%s base_url=%s",
+            str(home)[:64] if home is not None else "(env fallback)",
+            creds["app_id"][:8] + "..." if len(creds["app_id"]) > 8 else creds["app_id"],
+            self._base_url_for(creds),
+        )
+        return client
+
+    def client_for_current_home(self) -> FeishuClient:
+        """解析当前 turn 所属 home 并返回（按需构建）其 FeishuClient。
+
+        当前 home 解析不到凭据时回退 env 兜底路径并告警——宁可发错身份，
+        不可静默吞卡（错误会在 reply 阶段暴露给日志排查）。
+        """
+        from ..config.reader import current_hermes_home, feishu_creds_for_home
+
+        home: Path | None
+        creds: dict[str, str] = {}
+        try:
+            home = current_hermes_home()
+            creds = feishu_creds_for_home(home)
+        except Exception:
+            _logger.warning("HLS: turn home resolution failed, env fallback", exc_info=True)
+            home = None
+            creds = {}
+        if not creds.get("app_id") or not creds.get("app_secret"):
+            if home is not None:
+                _logger.warning(
+                    "HLS: no feishu creds for home %s — env fallback", home
+                )
+            home = None
+            creds = feishu_creds_for_home(None)
+        cache_key = str(home) if home is not None else "__env__"
+        with self._lock:
+            client = self._clients.get(cache_key)
+            if client is None:
+                if not creds.get("app_id") or not creds.get("app_secret"):
+                    raise RuntimeError("feishu credentials not configured")
+                client = self._build(home, creds)
+                self._clients[cache_key] = client
+            return client
+
+
+class _RoutingFeishuClient:
+    """FeishuClient 路由代理（v1.8.5）。
+
+    控制器全部卡片操作继续走 ``self._client.<method>()``；代理在每次属性
+    访问时按当前 turn 所属 profile home 解析底层 FeishuClient——同一进程
+    内三条 profile 流（不同飞书 bot）并发时各自拿到自己的 client。
+    """
+
+    def __init__(self, pool: _ClientPool) -> None:
+        self._pool = pool
+
+    def _resolve(self) -> FeishuClient:
+        return self._pool.client_for_current_home()
+
+    def __getattr__(self, name: str) -> Any:
+        # _pool/_resolve 在实例 dict 里，不会进到这里；其余全部委派。
+        return getattr(self._resolve(), name)
+
+
 class StreamCardController(ControllerMixin, UnifiedControllerMixin):
     """流式卡片控制器 — 管理多条消息的卡片生命周期."""
 
@@ -117,28 +213,20 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         async with self._init_lock:
             if self._initialized:
                 return
-            app_id = self._cfg.feishu_app_id or self._cfg.env_app_id
-            app_secret = self._cfg.feishu_app_secret or self._cfg.env_app_secret
-            if not app_id or not app_secret:
-                _logger.error(
-                    "FeishuClient init failed: credentials not configured "
-                    "(app_id=%s, env_app_id=%s)",
-                    bool(app_id),
-                    bool(self._cfg.env_app_id),
-                )
-                raise RuntimeError("feishu credentials not configured")
-            self._client = FeishuClient(
-                FeishuClientConfig(
-                    app_id=app_id,
-                    app_secret=app_secret,
-                    base_url=self._cfg.feishu_base_url,
-                )
-            )
+            # v1.8.5: multiplex 多 bot —— _client 改为路由代理，按当前 turn
+            # 所属 profile home 从池中取各 profile 自己的 FeishuClient。
+            # 凭据不再在 init 时定死；此处仅预建当前 home 的 client（pre-warm
+            # 语义不变），失败立即抛出（与旧行为一致：无凭据不建会话）。
+            self._pool = _ClientPool()
+            self._client = _RoutingFeishuClient(self._pool)
+            # 预热：解析当前 home（多为网关启动 profile / default）的 client。
+            # client_for_current_home 是同步方法（构建 lark SDK 客户端，无 IO
+            # await），不能 await——v1.8.6 曾误加 await 导致 TypeError、全部
+            # 卡片创建失败。
+            self._pool.client_for_current_home()
             self._initialized = True
             _logger.info(
-                "FeishuClient initialized: app_id=%s base_url=%s",
-                app_id[:8] + "..." if len(app_id) > 8 else app_id,
-                self._cfg.feishu_base_url,
+                "FeishuClient routing pool initialized (multiplex per-profile bots)"
             )
 
     def _client_ok(self) -> bool:

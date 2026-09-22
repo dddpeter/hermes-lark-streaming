@@ -7,6 +7,12 @@ import time
 from typing import Callable
 
 from .. import __version__
+from ..config.reader import (
+    current_hermes_home,
+    reset_turn_home,
+    set_turn_home,
+    set_turn_home_thread,
+)
 from ..state.phase import TERMINAL_PHASES
 from . import (
     _logger,
@@ -25,6 +31,16 @@ def _wrap_handle_message(orig: Callable) -> Callable:
 
     @functools.wraps(orig)
     async def wrapper(self, event, *args, **kwargs):
+        # v1.8.5 (multiplex 多 bot): /aowen interrupt hint 卡在 START 链之前
+        # 发出，同样要归属当前消息所属 profile。token 式：wrapper 返回后
+        # reset，避免把 home 泄漏进当前任务的后续代码。
+        _hm_token = set_turn_home(str(current_hermes_home()))
+        try:
+            return await _handle_message_inner(self, event, orig, *args, **kwargs)
+        finally:
+            reset_turn_home(_hm_token)
+
+    async def _handle_message_inner(self, event, orig, *args, **kwargs):
         # NORMALIZE hook — fires before any message processing
         try:
             from .hooks import on_feishu_normalize
@@ -98,6 +114,13 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
         with _started_msg_ids_lock:
             _started_msg_ids.add(mid)
 
+        # v1.8.5 (multiplex 多 bot): 绑定本消息所属 profile 的 home。hermes
+        # 用 contextvar 做 per-turn HERMES_HOME override（不动 os.environ），
+        # 此处处于 turn 任务上下文，实时解析即得路由后 home。卡片 API 的
+        # 执行位（loop 任务 / flush 定时器 / worker 线程）凭此拿到正确 bot。
+        _turn_home_resolved = str(current_hermes_home())
+        set_turn_home(_turn_home_resolved)
+
         # ── START hook ──
         if _is_feishu:
             try:
@@ -118,8 +141,10 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
             "event_message_id": "",  # filled by _wrap_run_agent
             "card_sent": False,
             "_msg_start_time": time.monotonic(),  # 自计时：替代无法获取的 _response_time 局部变量
+            "turn_home": _turn_home_resolved,  # v1.8.5: multiplex per-profile home
         }
         _msg_ctx.set(msg_context)
+        set_turn_home_thread(_turn_home_resolved)
 
         # v1.3.4 fix (P1): 确保 orig() 抛异常时 _msg_ctx / _started_msg_ids
         # 导致 _msg_ctx 保留 stale event_message_id，下一条消息的
@@ -129,6 +154,9 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
                 _started_msg_ids.discard(mid)
             _msg_ctx.set(None)
             _thread_local_ctx.data = None
+            # v1.8.5: 解绑 turn home（回退实时解析）
+            set_turn_home(None)
+            set_turn_home_thread(None)
 
         try:
             result = await orig(self, event, source, *args, **kwargs)
@@ -305,9 +333,14 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                         "message_id"
                     ),  # Track parent for cleanup
                     "_original_msg_context_ref": _original_msg_context_ref,  # Propagate ref to original
+                    # v1.8.5: 中断链的新消息可能属于另一 profile（multiplex），
+                    # 重解析而非继承 parent 的 home。
+                    "turn_home": str(current_hermes_home()),
                 }
                 _msg_ctx.set(ctx)
                 _thread_local_ctx.data = dict(ctx)
+                set_turn_home(ctx["turn_home"])
+                set_turn_home_thread(ctx["turn_home"])
 
                 # anchor_id fix: use event_message_id as the new card's
                 # v1.8.1 (P1): interrupt 链路同样传递话题隔离键，新卡归入
@@ -364,6 +397,8 @@ def _wrap_run_agent(orig: Callable) -> Callable:
             if _saved_parent_ctx is not None:
                 _msg_ctx.set(_saved_parent_ctx)
                 _thread_local_ctx.data = dict(_saved_parent_ctx)
+                set_turn_home(_saved_parent_ctx.get("turn_home"))
+                set_turn_home_thread(_saved_parent_ctx.get("turn_home"))
             raise
 
         # We must fire B's COMPLETE hook first (with B's result), then
@@ -624,6 +659,9 @@ def _wrap_run_agent(orig: Callable) -> Callable:
         if _saved_parent_ctx is not None:
             _msg_ctx.set(_saved_parent_ctx)
             _thread_local_ctx.data = dict(_saved_parent_ctx)
+            # v1.8.5: 恢复 parent 的 turn home（中断链跨 profile 场景）
+            set_turn_home(_saved_parent_ctx.get("turn_home"))
+            set_turn_home_thread(_saved_parent_ctx.get("turn_home"))
 
         return result
 
@@ -708,6 +746,11 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
         # 回复锚传下去；旧版 hermes 不传该参数时退回旧行为（无锚）。
         _bg_anchor = event_message_id or None
         _bg_thread_id = getattr(source, "thread_id", None)
+
+        # v1.8.5: /bg 任务归属发起消息的 profile——绑定 turn home
+        _bg_home = str(current_hermes_home())
+        set_turn_home(_bg_home)
+        set_turn_home_thread(_bg_home)
 
         # Set up message context so _maybe_wrap_callbacks works
         _msg_ctx.set(
@@ -864,6 +907,9 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
             # v1.3.4 fix (P1): clear context in finally — runs on ALL paths
             _msg_ctx.set(None)
             _thread_local_ctx.data = None
+            # v1.8.5: 解绑 /bg 任务的 turn home
+            set_turn_home(None)
+            set_turn_home_thread(None)
 
     return wrapper
 
@@ -978,6 +1024,19 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
         feishu_adapter._hls_cron_sending = (
             getattr(feishu_adapter, "_hls_cron_sending", 0) + 1
         )
+        # v1.8.5: cron tick 在各 profile 的 HERMES_HOME contextvar 作用域内
+        # 执行（hermes _cron_tick_profile_homes）——绑定当前 job 归属 profile
+        # 的 home，cron 卡由该 profile 自己的 bot 投递。token 式设置：本包装
+        # 器是同步函数，contextvar set 必须在退出前 reset，避免泄漏进当前
+        # 任务的后续代码。
+        from ..config.reader import current_hermes_home as _cron_cur_home
+        from ..config.reader import reset_turn_home as _cron_reset_home
+        from ..config.reader import set_turn_home as _cron_set_home
+        from ..config.reader import set_turn_home_thread as _cron_set_home_thread
+
+        _cron_home = str(_cron_cur_home())
+        _cron_token = _cron_set_home(_cron_home)
+        _cron_set_home_thread(_cron_home)
         try:
             return orig(job, content, adapters=adapters, loop=loop, **kwargs)
         finally:
@@ -990,5 +1049,7 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
             feishu_adapter._hls_cron_sending = (
                 getattr(feishu_adapter, "_hls_cron_sending", 0) - 1
             )
+            _cron_reset_home(_cron_token)
+            _cron_set_home_thread(None)
 
     return wrapper
