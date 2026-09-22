@@ -39,6 +39,8 @@ __all__ = [
     "_get_config",
     "_get_event_message_id",
     "_get_thread_local_ctx",
+    "_hls_is_wrapped",
+    "_hls_mark_wrapped",
     "_apply_gateway_runner_patches",
     "apply_patches",
     "_apply_direct_agent_patch",
@@ -150,6 +152,44 @@ def _send_result_ok(message_id: str | None = None):
         return None
 
 
+# v1.8.4: multiplex duplicate-copy dedupe.
+#
+# hermes multiplex mode (gateway_multiplex_mode.py: "one gateway per host
+# serves every profile") instantiates one PluginManager per profile home
+# (hermes_cli/plugins.py get_plugin_manager caches per home) and loads this
+# plugin once per profile that has it installed — each copy under a distinct
+# module name (plugins_loader._directory_module_name appends __home_<digest>
+# for scopes after the first).  Every copy then runs apply_patches() with its
+# OWN module-level guards (_applied / _gw_runner_patched), which cannot see
+# sibling copies.  Shared targets (GatewayRunner methods, module functions
+# like run_conversation / _deliver_result) got wrapped once per copy; each
+# wrapper layer fires its own copy's hooks against its own controller
+# (independent _sessions store) → one streaming card PER plugin copy per
+# message (observed: 3 reply cards on default profile with 3 profile
+# installs).
+#
+# Fix: mark the wrapped callable itself (a shared object — same class /
+# module across copies) with a sentinel and refuse to re-wrap.  This mirrors
+# the existing class-level sentinels (_hls_patched on FeishuAdapter,
+# _hls_direct_patched on AIAgent.run_conversation), which already survive
+# across copies for the same reason.
+
+
+def _hls_is_wrapped(func: Any) -> bool:
+    """True when *func* was already wrapped by this or a sibling plugin copy."""
+    return bool(getattr(func, "_hls_wrapped", False))
+
+
+def _hls_mark_wrapped(func: Callable) -> Callable:
+    """Mark *func* as HLS-wrapped.  Set AFTER functools.wraps so the sentinel
+    is not clobbered by wraps' __dict__ update."""
+    try:
+        setattr(func, "_hls_wrapped", True)
+    except (AttributeError, TypeError):
+        pass
+    return func
+
+
 # These imports must come AFTER shared state is defined to avoid circular
 
 from .adapter import (  # noqa: E402
@@ -216,58 +256,82 @@ def _apply_gateway_runner_patches() -> bool:
     try:
         # Patch each method individually so one missing method
         # doesn't prevent the others from being patched.
-        _patched_methods = []
-        if hasattr(GatewayRunner, "_handle_message"):
-            GatewayRunner._handle_message = _wrap_handle_message(
-                GatewayRunner._handle_message
-            )
-            _patched_methods.append("_handle_message")
-        else:
-            _logger.warning(
-                "hermes-lark-streaming: GatewayRunner._handle_message not found, skipping patch"
-            )
+        # v1.8.4: each wrap is guarded by a sentinel ON the patched method
+        # (shared class object) so sibling plugin copies under multiplex
+        # (one module instance per profile home) cannot double-wrap —
+        # double-wrap = hooks fire N times = one streaming card per copy.
+        # v1.8.7: sentinel 检查+wrap 必须在**类级锁**内进行——两个副本的延迟
+        # 补丁线程几乎同时醒来时（gateway.run 加载后 TOCTOU 窗口），裸 sentinel
+        # 检查会双双通过并嵌套双 wrap（生产日志实证：default/coder 两副本
+        # controller 同时活跃）。锁挂共享类上，跨副本互斥。
+        # v1.8.7: 类级锁（挂在共享类上，跨副本互斥）内完成 sentinel 检查+wrap，
+        # 消除两个副本延迟补丁线程并发醒来的 TOCTOU 双 wrap 竞态。
+        _gw_lock = getattr(GatewayRunner, "_hls_patch_lock", None)
+        if _gw_lock is None:
+            _gw_lock = threading.Lock()
+            setattr(GatewayRunner, "_hls_patch_lock", _gw_lock)
 
-        if hasattr(GatewayRunner, "_handle_message_with_agent"):
-            GatewayRunner._handle_message_with_agent = _wrap_handle_message_with_agent(
-                GatewayRunner._handle_message_with_agent
-            )
-            _patched_methods.append("_handle_message_with_agent")
-        else:
-            _logger.warning(
-                "hermes-lark-streaming: GatewayRunner._handle_message_with_agent not found, skipping patch"
-            )
+        with _gw_lock:
+            _patched_methods = []
+            if hasattr(GatewayRunner, "_handle_message"):
+                _m = GatewayRunner._handle_message
+                if not _hls_is_wrapped(_m):
+                    GatewayRunner._handle_message = _hls_mark_wrapped(
+                        _wrap_handle_message(_m)
+                    )
+                _patched_methods.append("_handle_message")
+            else:
+                _logger.warning(
+                    "hermes-lark-streaming: GatewayRunner._handle_message not found, skipping patch"
+                )
 
-        if hasattr(GatewayRunner, "_run_agent"):
-            GatewayRunner._run_agent = _wrap_run_agent(GatewayRunner._run_agent)
-            _patched_methods.append("_run_agent")
-        else:
-            _logger.warning(
-                "hermes-lark-streaming: GatewayRunner._run_agent not found, skipping patch"
-            )
+            if hasattr(GatewayRunner, "_handle_message_with_agent"):
+                _m = GatewayRunner._handle_message_with_agent
+                if not _hls_is_wrapped(_m):
+                    GatewayRunner._handle_message_with_agent = _hls_mark_wrapped(
+                        _wrap_handle_message_with_agent(_m)
+                    )
+                _patched_methods.append("_handle_message_with_agent")
+            else:
+                _logger.warning(
+                    "hermes-lark-streaming: GatewayRunner._handle_message_with_agent not found, skipping patch"
+                )
 
-        try:
-            GatewayRunner._run_background_task = _wrap_run_background_task(
-                GatewayRunner._run_background_task
-            )
-            _patched_methods.append("_run_background_task")
-        except AttributeError:
-            _logger.debug(
-                "hermes-lark-streaming: _run_background_task not found, background cards disabled"
-            )
+            if hasattr(GatewayRunner, "_run_agent"):
+                _m = GatewayRunner._run_agent
+                if not _hls_is_wrapped(_m):
+                    GatewayRunner._run_agent = _hls_mark_wrapped(_wrap_run_agent(_m))
+                _patched_methods.append("_run_agent")
+            else:
+                _logger.warning(
+                    "hermes-lark-streaming: GatewayRunner._run_agent not found, skipping patch"
+                )
 
-        if not _patched_methods:
-            _logger.error(
-                "hermes-lark-streaming: GatewayRunner patch FAILED — "
-                "no methods found. Streaming cards will NOT work."
-            )
-            return False
+            try:
+                _m = GatewayRunner._run_background_task
+                if not _hls_is_wrapped(_m):
+                    GatewayRunner._run_background_task = _hls_mark_wrapped(
+                        _wrap_run_background_task(_m)
+                    )
+                _patched_methods.append("_run_background_task")
+            except AttributeError:
+                _logger.debug(
+                    "hermes-lark-streaming: _run_background_task not found, background cards disabled"
+                )
 
-        _gw_runner_patched = True
-        _logger.info(
-            "hermes-lark-streaming: GatewayRunner patched methods: %s",
-            ", ".join(_patched_methods),
-        )
-        return True
+            if not _patched_methods:
+                _logger.error(
+                    "hermes-lark-streaming: GatewayRunner patch FAILED — "
+                    "no methods found. Streaming cards will NOT work."
+                )
+                return False
+
+            _gw_runner_patched = True
+            _logger.info(
+                "hermes-lark-streaming: GatewayRunner patched methods: %s",
+                ", ".join(_patched_methods),
+            )
+            return True
     except (ImportError, AttributeError) as e:
         _logger.error(
             "hermes-lark-streaming: GatewayRunner patch FAILED — "
@@ -336,11 +400,22 @@ def apply_patches() -> None:
         _cl_mod = compat.conversation_loop_module
         _cl_run_conversation = compat.conversation_loop_func
         try:
-            _cl_mod.run_conversation = _wrap_run_conversation(_cl_run_conversation)
-            _module_patch_applied = True
-            _logger.info(
-                "hermes-lark-streaming: agent.conversation_loop module patched ✓"
-            )
+            # v1.8.4: sentinel on the shared module function — sibling plugin
+            # copies under multiplex must not re-wrap.
+            if _hls_is_wrapped(_cl_run_conversation):
+                _module_patch_applied = True
+                _logger.info(
+                    "hermes-lark-streaming: agent.conversation_loop already "
+                    "wrapped (multiplex duplicate copy detected), skipping"
+                )
+            else:
+                _cl_mod.run_conversation = _hls_mark_wrapped(
+                    _wrap_run_conversation(_cl_run_conversation)
+                )
+                _module_patch_applied = True
+                _logger.info(
+                    "hermes-lark-streaming: agent.conversation_loop module patched ✓"
+                )
         except (AttributeError, TypeError) as e:
             _logger.warning(
                 "hermes-lark-streaming: agent.conversation_loop found but "
@@ -362,12 +437,24 @@ def apply_patches() -> None:
     if compat.has_cron_scheduler:
         try:
             _cron_mod = compat.cron_scheduler_module
-            _cron_mod._deliver_result = _wrap_cron_deliver(_cron_mod._deliver_result)
-            cron_patched = True
-            _logger.info(
-                "hermes-lark-streaming: cron scheduler patched ✓ (module=%s)",
-                getattr(_cron_mod, "__name__", "?"),
-            )
+            # v1.8.4: sentinel on the shared module function — sibling plugin
+            # copies under multiplex must not re-wrap.
+            _cron_orig = _cron_mod._deliver_result
+            if _hls_is_wrapped(_cron_orig):
+                cron_patched = True
+                _logger.info(
+                    "hermes-lark-streaming: cron scheduler already wrapped "
+                    "(multiplex duplicate copy detected), skipping"
+                )
+            else:
+                _cron_mod._deliver_result = _hls_mark_wrapped(
+                    _wrap_cron_deliver(_cron_orig)
+                )
+                cron_patched = True
+                _logger.info(
+                    "hermes-lark-streaming: cron scheduler patched ✓ (module=%s)",
+                    getattr(_cron_mod, "__name__", "?"),
+                )
         except (AttributeError, TypeError) as e:
             _logger.debug("hermes-lark-streaming: cron.scheduler patch failed (%s)", e)
 
