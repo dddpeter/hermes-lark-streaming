@@ -46,6 +46,9 @@ class ToolStep:
     elapsed_ms: float = 0.0
     # v1.8.3: stable identity for the panel fragment cache (0 = uncached).
     uid: int = 0
+    # v1.8.8: hermes 稳定工具调用 ID（tool_start_callback/tool_complete_callback
+    # 携带），空串 = 旧版 hermes 无该 ID（按名字配对）。不参与缓存键。
+    call_id: str = ""
 
 
 @dataclass
@@ -302,11 +305,17 @@ class ToolUseTracker:
             return 0.0
         return (time.time() - self._session.started_at) * 1000
 
-    def record_start(self, name: str, detail: str = "") -> None:
+    def record_start(self, name: str, detail: str = "", call_id: str = "") -> None:
         if self._session is None:
             self._session = ToolSession(started_at=time.time())
         if len(self._session.steps) >= self._max_steps:
             return
+        # v1.8.8: 稳定 call_id 幂等——同一 call_id 重复 start（hermes 重试路径
+        # 或双包装竞态）不追加第二个 running 步骤。
+        if call_id:
+            for step in reversed(self._session.steps):
+                if step.call_id == call_id and step.call_id:
+                    return
         self._session.steps.append(
             ToolStep(
                 name=name,
@@ -314,33 +323,56 @@ class ToolUseTracker:
                 detail=detail,
                 started_at=time.time(),
                 uid=next(ToolUseTracker._uid_seq),
+                call_id=call_id,
             )
         )
 
-    def record_end(self, name: str, *, error: str = "", output: str = "") -> None:
-        """通过名字匹配最近的一个 running 步骤来结束."""
+    def record_end(
+        self,
+        name: str,
+        *,
+        error: str = "",
+        output: str = "",
+        call_id: str = "",
+    ) -> None:
+        """结束一个 running 步骤。
+
+        v1.8.8: 有 call_id（新版 hermes 的 ``tool_start_callback`` /
+        ``tool_complete_callback`` 稳定 ID）时优先按 call_id 精确配对——并行
+        同名工具调用不再错配；无 call_id（旧版 hermes 走
+        ``tool_progress_callback``）回退按名字匹配最近 running 步骤。
+        """
         if self._session is None:
             return
         desc = _resolve_tool_descriptor(name)
         sanitizer = desc.get("sanitizer") if desc else None
+
+        def _finish(step: ToolStep) -> None:
+            step.status = "error" if error else "success"
+            step.error = error
+            step.output = output
+            step.elapsed_ms = (
+                (time.time() - step.started_at) * 1000
+                if step.started_at is not None
+                else 0.0
+            )
+            if error:
+                step.error_block = _build_display_block(
+                    error, "text", sanitizer=sanitizer
+                )
+            elif output:
+                step.result_block = _build_display_block(
+                    output, "json", sanitizer=sanitizer
+                )
+
+        if call_id:
+            for step in reversed(self._session.steps):
+                if step.call_id == call_id and step.status == "running":
+                    _finish(step)
+                    return
         for step in reversed(self._session.steps):
             if step.name == name and step.status == "running":
-                step.status = "error" if error else "success"
-                step.error = error
-                step.output = output
-                step.elapsed_ms = (
-                    (time.time() - step.started_at) * 1000
-                    if step.started_at is not None
-                    else 0.0
-                )
-                if error:
-                    step.error_block = _build_display_block(
-                        error, "text", sanitizer=sanitizer
-                    )
-                elif output:
-                    step.result_block = _build_display_block(
-                        output, "json", sanitizer=sanitizer
-                    )
+                _finish(step)
                 return
         # v1.7.0 (R2-03): the fallback append previously bypassed _max_steps —
         # when record_start had silently dropped steps at the cap, every
@@ -363,6 +395,7 @@ class ToolUseTracker:
                 if output
                 else None,
                 uid=next(ToolUseTracker._uid_seq),
+                call_id=call_id,
             )
         )
 

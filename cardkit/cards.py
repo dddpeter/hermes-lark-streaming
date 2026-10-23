@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from .elements import (
     ANSWER_ELEMENT_ID,
+    CARD_WIDTH_MODE,
     UNIFIED_PANEL_ELEMENT_ID,
     _build_unified_panel_placeholder,
     _count_tag_objects,
@@ -182,6 +183,7 @@ def build_streaming_card_v2(
                 "print_step": {"default": print_step},
                 "print_strategy": print_strategy,
             },
+            "width_mode": CARD_WIDTH_MODE,
             "locales": _LOCALES,
             "summary": {
                 "content": _T["processing"][0],

@@ -232,6 +232,19 @@ def _cleanup_config() -> None:
 
 def register(ctx: "PluginContext") -> None:
     """Register hermes-lark-streaming as a Hermes plugin (applies runtime patches)."""
+    # 生产 hotfix 回流（2026-10 就地修于安装副本，v1.8.8 收编）：A2A
+    # profile-forward 子进程（`hermes chat --source a2a`）headless 运行，
+    # 没有 gateway runtime 可 patch，且在该上下文解析 gateway/feishu 模块
+    # 可能死锁插件发现。直接跳过——流式卡属于网关进程，其补丁不受影响。
+    import os as _os
+
+    if _os.environ.get("HERMES_A2A_PEER"):
+        _logger.info(
+            "hermes-lark-streaming v%s: A2A subprocess detected (HERMES_A2A_PEER set) — skipping patches",
+            __version__,
+        )
+        return
+
     # v1.8.0 (P1-1): 依赖健康检测先于一切补丁——07-21 型断连的日志指纹
     # 必须出现在 patch 输出之前，方便运维按时间线定位。
     try:

@@ -89,7 +89,7 @@ class TestMultiplexDuplicateCopyDedupe:
 
     def test_gateway_runner_wrapped_exactly_once_across_copies(self) -> None:
         """两个副本先后 apply，方法只被 wrap 一次（哨兵阻止嵌套双 wrap）。"""
-        first = _apply_once()
+        _apply_once()
         after_first = {
             name: getattr(_FakeGatewayRunner, name)
             for name in (

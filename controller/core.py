@@ -8,6 +8,7 @@ import threading
 import time
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Future as ConcurrentFuture
+from pathlib import Path
 from typing import Any
 
 from ..config import Config
@@ -42,7 +43,7 @@ _INTERRUPT_MAP_MAX = 200
 # 只兜底极端场景（目标永不到达终态时避免 map 无限增长）。
 _CONTINUATION_MAP_MAX = 200
 
-from ..state.session import (  # noqa: E402 — 置于常量块后系历史布局，顺序调整有循环导入风险
+from ..state.session import (  # noqa: E402, I001 — 置于常量块后系历史布局，顺序调整有循环导入风险
     CardSession,
 )
 
@@ -622,8 +623,12 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         tool_name: str,
         status: str,
         detail: str = "",
+        tool_call_id: str = "",
     ) -> None:
-        """工具调用事件."""
+        """工具调用事件.
+
+        v1.8.8: tool_call_id — 新版 hermes 的稳定工具调用 ID
+        （tool_start_callback / tool_complete_callback），空串 = 旧版按名字配对。"""
         if not self.enabled:
             return
         session = self._get_active_session(message_id)
@@ -639,13 +644,14 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             return
 
         if status in ("running", "started", "tool.started"):
-            session.tool_use.record_start(tool_name, detail)
+            session.tool_use.record_start(tool_name, detail, call_id=tool_call_id)
         else:
             is_error = status in ("error", "failed")
             session.tool_use.record_end(
                 tool_name,
                 error=detail if is_error else "",
                 output="" if is_error else detail,
+                call_id=tool_call_id,
             )
 
         if session.unified_state is None:

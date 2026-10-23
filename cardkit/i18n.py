@@ -40,6 +40,8 @@ _T: dict[str, tuple[str, str]] = {
     "clarify_submitted": ("Submitted, awaiting confirmation...", "已提交，等待确认..."),
     "clarify_retry": ("Retry submission", "重试提交"),
     "clarify_confirmed": ("Confirmed", "已确认"),
+    # v1.8.8: retire_clarify_card（官方钩子）——clarify 以文字作答/超时/取消后卡片收尾
+    "clarify_retired": ("*{}*", "*{}*"),
     "cost_estimated": ("${} (est.)", "${} (估算)"),
     "cost_actual": ("${} (actual)", "${} (实报)"),
     "cost_included": ("Free", "免费"),

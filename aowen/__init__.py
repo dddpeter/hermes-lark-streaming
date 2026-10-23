@@ -7,6 +7,15 @@ import threading
 import time
 from typing import Any
 
+# v1.8.8: 卡片宽度档位（fill）— 与 cardkit 全部建卡点共用。
+# 双路径同 patching/__init__.py 惯例：插件加载时是 hermes_lark_streaming.aowen
+# （相对可用）；pytest 有用例以顶层 `from aowen import ...` 导入（repo 根在
+# sys.path），此时 .. 越过顶层包，须退回顶层 cardkit。
+try:
+    from ..cardkit import CARD_WIDTH_MODE
+except ImportError:  # pragma: no cover — pytest 顶层导入路径
+    from cardkit import CARD_WIDTH_MODE
+
 _logger = logging.getLogger("hermes_lark_streaming")
 
 # Pitfall: Feishu API calls run in real OS threads; concurrent increments
@@ -358,7 +367,7 @@ def build_help_card() -> dict[str, Any]:
 
     return {
         "schema": "2.0",
-        "config": {"update_multi": True},
+        "config": {"update_multi": True, "width_mode": CARD_WIDTH_MODE},
         "header": {
             "title": {"tag": "plain_text", "content": "插件命令帮助"},
             "template": "blue",
@@ -510,7 +519,7 @@ def build_status_card() -> dict[str, Any]:
 
         return {
             "schema": "2.0",
-            "config": {"update_multi": True},
+            "config": {"update_multi": True, "width_mode": CARD_WIDTH_MODE},
             "header": {
                 "title": {"tag": "plain_text", "content": "插件状态"},
                 "template": "green" if ctrl_ready else "red",
@@ -534,7 +543,7 @@ def build_status_card() -> dict[str, Any]:
         _logger.error("HLS: build_status_card error", exc_info=True)
         return {
             "schema": "2.0",
-            "config": {"update_multi": True},
+            "config": {"update_multi": True, "width_mode": CARD_WIDTH_MODE},
             "header": {
                 "title": {"tag": "plain_text", "content": "插件状态"},
                 "template": "red",
@@ -667,7 +676,7 @@ def build_monitor_card() -> dict[str, Any]:
 
     return {
         "schema": "2.0",
-        "config": {"update_multi": True},
+        "config": {"update_multi": True, "width_mode": CARD_WIDTH_MODE},
         "header": {
             "title": {"tag": "plain_text", "content": "插件监控面板"},
             "template": "blue",
@@ -680,7 +689,7 @@ def build_reset_card() -> dict[str, Any]:
     """Build reset confirmation card."""
     return {
         "schema": "2.0",
-        "config": {"update_multi": True},
+        "config": {"update_multi": True, "width_mode": CARD_WIDTH_MODE},
         "header": {
             "title": {"tag": "plain_text", "content": "统计已重置"},
             "template": "green",
@@ -704,7 +713,7 @@ def _build_unknown_command_card(subcommand: str) -> dict:
     """Build unknown command card."""
     return {
         "schema": "2.0",
-        "config": {"update_multi": True},
+        "config": {"update_multi": True, "width_mode": CARD_WIDTH_MODE},
         "header": {
             "title": {"tag": "plain_text", "content": "未知命令"},
             "template": "orange",
@@ -728,7 +737,7 @@ def build_interrupt_hint_card() -> dict[str, Any]:
     """Build hint card shown when /aowen sent during active agent run."""
     return {
         "schema": "2.0",
-        "config": {"update_multi": True},
+        "config": {"update_multi": True, "width_mode": CARD_WIDTH_MODE},
         "header": {
             "title": {"tag": "plain_text", "content": "AI 正在回复中"},
             "template": "orange",
@@ -764,7 +773,7 @@ def _handle_config_reload() -> dict:
         _logger.info("HLS: config reloaded via /aowen config reload")
         return {
             "schema": "2.0",
-            "config": {"update_multi": True},
+            "config": {"update_multi": True, "width_mode": CARD_WIDTH_MODE},
             "header": {
                 "title": {"tag": "plain_text", "content": "配置已重新加载"},
                 "template": "green",
@@ -787,7 +796,7 @@ def _handle_config_reload() -> dict:
         err_text = str(e)[:500]
         return {
             "schema": "2.0",
-            "config": {"update_multi": True},
+            "config": {"update_multi": True, "width_mode": CARD_WIDTH_MODE},
             "header": {
                 "title": {"tag": "plain_text", "content": "配置加载失败"},
                 "template": "red",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from typing import Any
 
-from .elements import _escape_md
+from .elements import CARD_WIDTH_MODE, _escape_md
 from .i18n import _LOCALES, _T, _i18n
 from .md import (
     _MAX_CRON_TABLES,
@@ -20,6 +20,7 @@ __all__ = [
     "build_clarify_card",
     "build_clarify_submitted_card",
     "build_clarify_confirmed_card",
+    "build_clarify_retired_card",
     "normalize_clarify_choices",
 ]
 
@@ -96,7 +97,7 @@ def build_cron_card(content: str) -> dict[str, Any]:
     """Cron 推送用的极简静态卡片 — schema 2.0，仅 markdown 内容."""
     card: dict[str, Any] = {
         "schema": "2.0",
-        "config": {"locales": _LOCALES},
+        "config": {"width_mode": CARD_WIDTH_MODE, "locales": _LOCALES},
         "body": {"elements": []},
     }
     if content.strip():
@@ -146,7 +147,7 @@ def build_gateway_card(
 
     card: dict[str, Any] = {
         "schema": "2.0",
-        "config": {"locales": _LOCALES},
+        "config": {"width_mode": CARD_WIDTH_MODE, "locales": _LOCALES},
         "body": {"elements": elements},
     }
 
@@ -266,6 +267,7 @@ def build_clarify_card(
         "schema": "2.0",
         "config": {
             "streaming_mode": False,
+            "width_mode": CARD_WIDTH_MODE,
             "locales": _LOCALES,
         },
         "body": {"elements": elements},
@@ -351,6 +353,53 @@ def build_clarify_submitted_card(
         "schema": "2.0",
         "config": {
             "streaming_mode": False,
+            "width_mode": CARD_WIDTH_MODE,
+            "locales": _LOCALES,
+        },
+        "body": {"elements": elements},
+    }
+    return card
+
+
+def build_clarify_retired_card(*, question: str, notice: str) -> dict[str, Any]:
+    """v1.8.8: 构建 Clarify 已收尾卡片 — 官方 ``retire_clarify_card(clarify_id, notice)``
+    钩子的落地形态。clarify 以文字作答（数字直选/Other 后输入）、超时或被后续
+    prose 取消时，gateway 会调钩子要求持久卡"不再看起来可回答"。无按钮，notice
+    一行斜体说明结束原因（gateway i18n 文案，如 "Answered"/"已作答"）。"""
+    notice_text = (notice or "").strip() or "Ended"
+    en_retired, zh_retired = _T["clarify_retired"]
+    en_line = en_retired.format(_escape_md(notice_text))
+    zh_line = zh_retired.format(_escape_md(notice_text))
+
+    elements: list[dict[str, Any]] = [
+        {
+            "tag": "div",
+            "icon": {
+                "tag": "standard_icon",
+                "token": "resolve_filled",
+                "size": "20px 20px",
+                "color": "grey",
+            },
+            "text": {
+                "tag": "lark_md",
+                "content": f"**{_escape_md(question)}**",
+            },
+        },
+        {
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": en_line,
+                "i18n_content": _i18n(en_line, zh_line),
+            },
+        },
+    ]
+
+    card: dict[str, Any] = {
+        "schema": "2.0",
+        "config": {
+            "streaming_mode": False,
+            "width_mode": CARD_WIDTH_MODE,
             "locales": _LOCALES,
         },
         "body": {"elements": elements},
@@ -409,6 +458,7 @@ def build_clarify_confirmed_card(*, question: str, selected: str) -> dict[str, A
         "schema": "2.0",
         "config": {
             "streaming_mode": False,
+            "width_mode": CARD_WIDTH_MODE,
             "locales": _LOCALES,
         },
         "body": {"elements": elements},

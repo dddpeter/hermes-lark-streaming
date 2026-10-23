@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import sys
 import threading
 import time
 from typing import Any, Callable
@@ -47,6 +48,8 @@ __all__ = [
     # FeishuAdapter patch helpers
     "_apply_feishu_adapter_patches",
     "_verify_feishu_patch_identity",
+    # v1.8.8: official retire_clarify_card hook (clarify ends without a click)
+    "_make_feishu_adapter_retire_clarify",
     # v1.6.0: hook platform_registry.create_adapter — main-chain fix for deferred loading
     "_wrap_platform_registry_create_adapter",
     "_apply_create_adapter_hook",
@@ -202,6 +205,7 @@ from .adapter import (  # noqa: E402
     _clarify_selections,
     _classify_gateway_message,
     _handle_clarify_card_action,
+    _make_feishu_adapter_retire_clarify,
     _register_gateway_card,
     _send_result_ok,
     _unregister_gateway_card,
@@ -242,14 +246,17 @@ from .hooks import (  # noqa: E402
 # ── Public entry point ─────────────────────────────────────────────
 
 
-def _apply_gateway_runner_patches() -> bool:
-    """Apply the three critical GatewayRunner method patches."""
+def _apply_gateway_runner_patches(compat: Any | None = None) -> bool:
+    """Apply the three critical GatewayRunner method patches.
+
+    v1.8.8: *compat* 可选——调用方（_apply_resolved_targets）传入已解析的
+    compat；缺省 fresh 解析（延迟补丁线程/旧调用方兼容）。"""
     global _gw_runner_patched
 
     if _gw_runner_patched:
         return True  # Already patched (e.g. immediate path succeeded)
 
-    GatewayRunner = HermesCompat().gateway_runner_class
+    GatewayRunner = (compat if compat is not None else HermesCompat()).gateway_runner_class
     if GatewayRunner is None:
         return False  # Not available yet
 
@@ -342,58 +349,32 @@ def _apply_gateway_runner_patches() -> bool:
         return False
 
 
-def apply_patches() -> None:
-    """Apply all runtime monkey patches to ``GatewayRunner`` and ``AIAgent``."""
-    if getattr(apply_patches, "_applied", False):
-        return
-    apply_patches._applied = True  # type: ignore[attr-defined]
+def _likely_gateway_process() -> bool:
+    """v1.8.8: 判定本进程是否会运行网关（缺失目标是否值得开延迟补丁线程）。
 
-    _logger.info("hermes-lark-streaming v%s: apply_patches() starting", __version__)
+    headless CLI（hermes chat / plugins / cron 子进程）永不重试——fresh
+    import 重型模块（run_agent 冷导入实测 ~15s）只会白费并触发插件加载器
+    10s 超时；网关进程 argv 带 gateway/serve，或 gateway.run 已（部分）加载。"""
+    if sys.modules.get("gateway.run") is not None:
+        return True
+    argv = {str(a).lower() for a in sys.argv[1:]}
+    return bool(argv & {"gateway", "serve"})
 
-    compat = HermesCompat()
-    # ``layout`` is kept for the doctor CLI's ``hermes_layout`` print and
-    # for parity with the legacy ``_detect_hermes_layout()`` contract.
-    layout = compat.get_layout_report()
+
+def _apply_resolved_targets(compat: Any, *, sys_modules_only: bool) -> dict[str, Any]:
+    """把 *compat* 的解析结果落到补丁上（eager 与延迟补丁线程共用）。
+
+    v1.8.8 抽出：apply_patches（register 阶段，sys_modules_only 解析）与
+    延迟补丁线程（fresh 解析）走同一落补丁路径。所有 wrap 均有跨副本
+    哨兵（v1.8.4），重复调用幂等。
+    """
+    global _patch_status
 
     # ── Patch GatewayRunner ──
     # This is the core patch — without it, streaming cards cannot work.
-    gw_patched = False
-    gw_delayed = False
-    if compat.has_gateway_runner:
-        # gateway.run already loaded — patch immediately
-        if _apply_gateway_runner_patches():
-            gw_patched = True
-            _logger.info("hermes-lark-streaming: GatewayRunner patched ✓")
-    else:
-        # gateway.run not yet loaded — start delayed-patch poll thread
-        _logger.info(
-            "hermes-lark-streaming: gateway.run not loaded yet — "
-            "starting delayed patch poll (2s interval, 60s timeout)",
-        )
-        gw_delayed = True
-
-        def _delayed_gw_patch():
-            """Poll for gateway.run and apply GatewayRunner patches once available."""
-            deadline = time.monotonic() + 60.0  # 60-second timeout
-            while time.monotonic() < deadline:
-                time.sleep(2.0)  # Poll every 2 seconds
-                if _apply_gateway_runner_patches():
-                    _logger.info(
-                        "hermes-lark-streaming: GatewayRunner patched (delayed) ✓"
-                    )
-                    return
-            # Timeout — gateway.run never became available
-            _logger.error(
-                "hermes-lark-streaming: gateway.run NOT FOUND after 60s — "
-                "this Hermes version may be too old or installed incorrectly. "
-                "Streaming cards will NOT work. "
-                "Please check: 1) Hermes is running via gateway mode, "
-                "2) Hermes version >= v0.5.0, "
-                "3) Re-run: hermes setup && hermes gateway start",
-            )
-
-        _delayed_thread = threading.Thread(target=_delayed_gw_patch, daemon=True)
-        _delayed_thread.start()
+    gw_patched = _apply_gateway_runner_patches(compat)
+    if gw_patched:
+        _logger.info("hermes-lark-streaming: GatewayRunner patched ✓")
 
     _module_patch_applied = False
     if compat.has_conversation_loop:
@@ -424,14 +405,14 @@ def apply_patches() -> None:
             )
 
     if not _module_patch_applied:
-        # Hermes <v0.10 OR module patch failed: use direct AIAgent patch
+        # Hermes <v0.10 OR module not loaded yet: use direct AIAgent patch
         _logger.info(
             "hermes-lark-streaming: using direct AIAgent patch "
-            "(Hermes %s conversation_loop module)",
-            "has no" if not compat.has_conversation_loop else "has incompatible",
+            "(conversation_loop %s)",
+            "not loaded yet" if sys_modules_only else "incompatible",
         )
 
-    _apply_direct_agent_patch()
+    _apply_direct_agent_patch(compat)
 
     cron_patched = False
     if compat.has_cron_scheduler:
@@ -481,7 +462,9 @@ def apply_patches() -> None:
     # FeishuAdapter instance hermes ever creates (initial / reconnect / multiplex)
     # has its class patched BEFORE it is handed to callers.  No timer, no
     # chicken-and-egg, covers clarify (send_clarify) and all other methods.
-    create_adapter_hooked = _apply_create_adapter_hook()
+    create_adapter_hooked = _apply_create_adapter_hook(
+        sys_modules_only=sys_modules_only
+    )
 
     # v1.7.0 (P1 RELAY fix): best-effort direct patch of the RelayAdapter
     # class. The create_adapter hook above is the main chain (relay adapters
@@ -489,15 +472,104 @@ def apply_patches() -> None:
     # direct import covers a gateway that already imported gateway.relay
     # before plugin registration. Missing module → not a relay deployment.
     relay_patched = False
-    try:
-        from gateway.relay.adapter import RelayAdapter as _RelayAdapter
+    if sys_modules_only:
+        _relay_mod = sys.modules.get("gateway.relay.adapter")
+        if _relay_mod is not None:
+            _RelayAdapter = getattr(_relay_mod, "RelayAdapter", None)
+            if _RelayAdapter is not None:
+                relay_patched = _apply_relay_adapter_patches(_RelayAdapter)
+    else:
+        try:
+            from gateway.relay.adapter import RelayAdapter as _RelayAdapter
 
-        relay_patched = _apply_relay_adapter_patches(_RelayAdapter)
-    except ImportError:
-        relay_patched = False
-    except Exception:
-        _logger.debug(
-            "hermes-lark-streaming: direct RelayAdapter patch failed", exc_info=True
+            relay_patched = _apply_relay_adapter_patches(_RelayAdapter)
+        except ImportError:
+            relay_patched = False
+        except Exception:
+            _logger.debug(
+                "hermes-lark-streaming: direct RelayAdapter patch failed", exc_info=True
+            )
+
+    return {
+        "gw_patched": gw_patched,
+        "conversation_loop": _module_patch_applied,
+        "cron_patched": cron_patched,
+        "feishu_patched": feishu_patched,
+        "create_adapter_hooked": create_adapter_hooked,
+        "relay_patched": relay_patched,
+    }
+
+
+def _apply_deferred_once() -> bool:
+    """延迟补丁线程单轮：fresh 解析 + 落补丁（幂等）。True = GatewayRunner 已就绪。"""
+    compat = HermesCompat()
+    _apply_resolved_targets(compat, sys_modules_only=False)
+    return _gw_runner_patched
+
+
+def apply_patches() -> None:
+    """Apply all runtime monkey patches to ``GatewayRunner`` and ``AIAgent``.
+
+    v1.8.8: register 阶段一律 sys_modules_only 解析（零 fresh import）——
+    headless CLI 进程 fresh import run_agent/gateway.run 会拖上整棵
+    agent/gateway 模块树（run_agent 冷导入实测 ~15s），超过 hermes 插件
+    加载器 10s 窗口 → "load timed out after 10s"。补丁就绪的网关进程里
+    这些模块已在 sys.modules（eager 路径不变）；冷启动的网关进程由下方
+    延迟补丁线程在窗口外用 fresh 模式补齐全部目标（不再只补
+    GatewayRunner）；headless 进程不开线程、静默跳过。
+    """
+    if getattr(apply_patches, "_applied", False):
+        return
+    apply_patches._applied = True  # type: ignore[attr-defined]
+
+    _logger.info("hermes-lark-streaming v%s: apply_patches() starting", __version__)
+
+    compat = HermesCompat(sys_modules_only=True)
+    # ``layout`` is kept for the doctor CLI's ``hermes_layout`` print and
+    # for parity with the legacy ``_detect_hermes_layout()`` contract.
+    layout = compat.get_layout_report()
+
+    status = _apply_resolved_targets(compat, sys_modules_only=True)
+    gw_patched = status["gw_patched"]
+    gw_delayed = False
+
+    if not gw_patched and _likely_gateway_process():
+        # gateway.run not yet loaded — start delayed-patch poll thread
+        # (fresh imports live OUTSIDE the plugin-loader 10s window)
+        _logger.info(
+            "hermes-lark-streaming: gateway.run not loaded yet — "
+            "starting delayed patch poll (2s interval, 60s timeout)",
+        )
+        gw_delayed = True
+
+        def _delayed_gw_patch():
+            """Poll for gateway.run and apply ALL deferred patches once available."""
+            deadline = time.monotonic() + 60.0  # 60-second timeout
+            while time.monotonic() < deadline:
+                time.sleep(2.0)  # Poll every 2 seconds
+                if _apply_deferred_once():
+                    _logger.info(
+                        "hermes-lark-streaming: GatewayRunner patched (delayed) ✓"
+                    )
+                    return
+            # Timeout — gateway.run never became available
+            _logger.error(
+                "hermes-lark-streaming: gateway.run NOT FOUND after 60s — "
+                "this Hermes version may be too old or installed incorrectly. "
+                "Streaming cards will NOT work. "
+                "Please check: 1) Hermes is running via gateway mode, "
+                "2) Hermes version >= v0.5.0, "
+                "3) Re-run: hermes setup && hermes gateway start",
+            )
+
+        _delayed_thread = threading.Thread(target=_delayed_gw_patch, daemon=True)
+        _delayed_thread.start()
+    elif not gw_patched:
+        _logger.info(
+            "hermes-lark-streaming: headless context (no gateway modules "
+            "loaded, argv=%s) — deferred patch poll skipped, streaming "
+            "cards stay gateway-only",
+            sys.argv[1:3],
         )
 
     # ── Summary ──
@@ -506,13 +578,13 @@ def apply_patches() -> None:
     _patch_status = {
         "version": __version__,
         "gateway_runner": "✓" if gw_patched else ("pending" if gw_delayed else "✗"),
-        "conversation_loop": "✓" if _module_patch_applied else "n/a (direct AIAgent)",
+        "conversation_loop": "✓" if status["conversation_loop"] else "n/a (direct AIAgent)",
         "aiagent_direct": "applied",
-        "cron_scheduler": "✓" if cron_patched else "n/a",
+        "cron_scheduler": "✓" if status["cron_patched"] else "n/a",
         "background_task": "✓" if gw_patched else ("pending" if gw_delayed else "n/a"),
-        "feishu_adapter": "✓" if feishu_patched else "✗",
-        "create_adapter_hook": "✓" if create_adapter_hooked else "✗",
-        "relay_adapter": "✓" if relay_patched else "n/a (hook-covered)",
+        "feishu_adapter": "✓" if status["feishu_patched"] else "✗",
+        "create_adapter_hook": "✓" if status["create_adapter_hooked"] else "✗",
+        "relay_adapter": "✓" if status["relay_patched"] else "n/a (hook-covered)",
         "hermes_layout": layout,
     }
     _logger.info(
@@ -528,9 +600,6 @@ def apply_patches() -> None:
         _patch_status["relay_adapter"],
         layout,
     )
-
-    # Deferred direct patch: retry AIAgent.run_conversation after Hermes
-    # finishes loading all modules (belt-and-suspenders for lazy imports)
 
 
 def _apply_feishu_adapter_patches(FeishuAdapter, *, is_repatch: bool = False) -> bool:
@@ -609,6 +678,25 @@ def _apply_feishu_adapter_patches(FeishuAdapter, *, is_repatch: bool = False) ->
         except AttributeError:
             _logger.debug(
                 "hermes-lark-streaming: FeishuAdapter._handle_card_action_event not found, /card suppression skipped"
+            )
+
+        # v1.8.8: retire_clarify_card — 官方 clarify 收尾钩子（clarify 未点击而
+        # 结束时 gateway 调用，要求持久卡停用按钮）。stock FeishuAdapter 未实现
+        # （base 声明 MAY-style）；若类自身已定义（未来 hermes 原生实现）， ours
+        # 包装原方法（先调 orig，插件卡收尾其后）。__dict__ 只看本类自有方法，
+        # 不误收基类/其它 adapter（如 slack）的实现。
+        try:
+            _orig_retire = FeishuAdapter.__dict__.get("retire_clarify_card")
+            FeishuAdapter.retire_clarify_card = _make_feishu_adapter_retire_clarify(
+                _orig_retire
+            )
+            _logger.info(
+                "hermes-lark-streaming: FeishuAdapter.retire_clarify_card installed ✓ "
+                "(clarify cards retire on typed answer / timeout / cancellation)"
+            )
+        except (AttributeError, TypeError) as e:
+            _logger.debug(
+                "hermes-lark-streaming: retire_clarify_card install failed (%s)", e
             )
 
         # Record this class as patched AFTER successful patch (only on success,
@@ -770,7 +858,7 @@ def _wrap_platform_registry_create_adapter(orig_create_adapter: Callable) -> Cal
     return _wrapped
 
 
-def _apply_create_adapter_hook() -> bool:
+def _apply_create_adapter_hook(*, sys_modules_only: bool = False) -> bool:
     """v1.6.0: install the platform_registry.create_adapter hook.
 
     Why this is the main-chain fix (not a fallback/compat shim):
@@ -807,15 +895,27 @@ def _apply_create_adapter_hook() -> bool:
       is extremely stable.
 
     Returns True if the hook was installed (or was already installed).
+
+    v1.8.8: *sys_modules_only* —— register 阶段只认已加载的
+    gateway.platform_registry（fresh import 属重型路径，留给延迟补丁线程）。
     """
-    try:
-        from gateway.platform_registry import platform_registry as _pr
-    except (ImportError, AttributeError):
-        _logger.info(
-            "hermes-lark-streaming: platform_registry not available yet, "
-            "create_adapter hook deferred (will retry on next apply_patches)"
-        )
-        return False
+    if sys_modules_only:
+        _pr = sys.modules.get("gateway.platform_registry")
+        if _pr is None:
+            _logger.debug(
+                "hermes-lark-streaming: platform_registry not loaded yet "
+                "(register phase), create_adapter hook deferred"
+            )
+            return False
+    else:
+        try:
+            from gateway.platform_registry import platform_registry as _pr
+        except (ImportError, AttributeError):
+            _logger.info(
+                "hermes-lark-streaming: platform_registry not available yet, "
+                "create_adapter hook deferred (deferred patch thread will retry)"
+            )
+            return False
 
     _current = getattr(_pr, "create_adapter", None)
     if _current is None:
@@ -837,9 +937,12 @@ def _apply_create_adapter_hook() -> bool:
     return True
 
 
-def _apply_direct_agent_patch() -> None:
-    """Directly patch AIAgent.run_conversation as belt-and-suspenders."""
-    AIAgent = HermesCompat().aiagent_class
+def _apply_direct_agent_patch(compat: Any | None = None) -> None:
+    """Directly patch AIAgent.run_conversation as belt-and-suspenders.
+
+    v1.8.8: *compat* 可选——register 阶段传入 sys_modules_only 解析结果
+    （headless 进程 AIAgent 未加载时此处不做 fresh import）。"""
+    AIAgent = (compat if compat is not None else HermesCompat()).aiagent_class
     if AIAgent is None:
         _logger.info(
             "hermes-lark-streaming: AIAgent.run_conversation direct patch deferred (run_agent not yet loaded)"

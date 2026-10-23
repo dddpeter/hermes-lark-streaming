@@ -332,7 +332,11 @@ class TestOnToolUpdated:
             )
 
         ctrl.on_tool_update.assert_called_once_with(
-            message_id="m1", tool_name="read", status="started", detail="file.py"
+            message_id="m1",
+            tool_name="read",
+            status="started",
+            detail="file.py",
+            tool_call_id="",  # v1.8.8: 稳定 call_id 透传（空 = 旧版按名字配对）
         )
         assert result is True
 

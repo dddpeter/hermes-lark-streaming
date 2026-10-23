@@ -162,6 +162,16 @@ def _maybe_wrap_callbacks(agent) -> None:
             _eid = _resolve_eid(eid)
             if not _eid:
                 return _orig_tool(event_type, tool_name, preview, *args, **kwargs)
+            # v1.8.8: 稳定 ID 回调（tool_start/complete_callback）接管
+            # started/completed 后将其**吞掉**而非透传——feishu 注册
+            # display_tier=medium，默认 tool_progress="new"（开启），网关
+            # progress_callback 收到 tool.started 会真发气泡（run_turn_
+            # progress.py _progress_emit）；透传 = 气泡 + 卡片面板双展示。
+            # 吞掉与下方消费路径同构：卡片面板是唯一工具展示面。
+            if event_type in ("tool.started", "tool.completed") and getattr(
+                agent, "_hls_stable_tool_ids", False
+            ):
+                return
             try:
                 from .hooks import on_tool_updated
 
@@ -180,6 +190,139 @@ def _maybe_wrap_callbacks(agent) -> None:
             return _orig_tool(event_type, tool_name, preview, *args, **kwargs)
 
         agent.tool_progress_callback = _tool_wrapper
+
+    # ── TOOL (v1.8.8): 稳定 call_id 回调 — tool_start_callback / tool_complete_callback ──
+    # 新版 hermes（生产 v0.21+ 已具备）除 tool_progress_callback 外还触发携带
+    # 稳定调用 ID 的成对回调：tool_start_callback(call_id, name, display_args) /
+    # tool_complete_callback(call_id, name, display_args, result)。并行同名工具
+    # 调用（max_parallel_turns）下按名字配对会错卡，这里按 call_id 精确配对；
+    # 旧版 hermes 无这两个属性（hasattr 判定，不能用真值——默认 None）时整段
+    # 跳过，走上方 progress 按名字配对的老路径。
+    if hasattr(agent, "tool_start_callback") and hasattr(
+        agent, "tool_complete_callback"
+    ):
+        _orig_tool_start = getattr(agent, "tool_start_callback", None)
+        _orig_tool_complete = getattr(agent, "tool_complete_callback", None)
+
+        def _stable_args_preview(tool_name: str, display_args) -> str:
+            """稳定路径 started 预览：优先复用 hermes 自己的预览构造器
+            （agent.display.build_tool_preview，与 progress 路径卡片展示同源），
+            不可导入时退回紧凑 JSON——退回前先过 hermes 的参数脱敏器：上游
+            ``_redact_tool_args_for_display(...) or ref.args`` 在脱敏器返回空
+            时会把**原始 args** 传下来，整包 dump 的暴露面大于"主参数预览"。"""
+            try:
+                from agent.display import build_tool_preview
+
+                return build_tool_preview(tool_name, display_args) or ""
+            except Exception:
+                pass
+            try:
+                from agent.display import redact_tool_args_for_display
+
+                display_args = (
+                    redact_tool_args_for_display(tool_name, display_args)
+                    or display_args
+                )
+            except Exception:
+                pass
+            try:
+                import json
+
+                s = json.dumps(display_args, ensure_ascii=False, default=str)
+                return s if len(s) <= 120 else s[:119] + "…"
+            except Exception:
+                return str(display_args)[:120]
+
+        def _stable_detect_failure(tool_name: str, result) -> tuple[bool, str]:
+            """(is_error, 可读后缀)。优先复用 hermes 的 canonical 判定
+            agent.display._detect_tool_failure（progress 路径 is_error 的同源
+            实现），不可导入时用保守启发式。"""
+            try:
+                from agent.display import _detect_tool_failure
+
+                return _detect_tool_failure(tool_name, result)
+            except Exception:
+                pass
+            data = result if isinstance(result, dict) else None
+            if data is not None:
+                err = data.get("error") or (
+                    data.get("message") if data.get("success") is False else None
+                )
+                if err:
+                    return True, f" [{str(err)[:80]}]"
+            elif isinstance(result, str) and result.lstrip()[:5].lower().startswith(
+                ("error", "trace")
+            ):
+                return True, ""
+            return False, ""
+
+        def _tool_start_wrapper(call_id, tool_name=None, *args, **kwargs):
+            # 扇出语义：先喂卡片，再**始终**透传 hermes 原回调——网关在
+            # approval 会话把 tool_start 挂成 combined_tool_start_callback
+            # （session API SSE 推送 / Discord 语音回执 / Slack 任务卡，见
+            # run_turn_runner._wire_turn_agent_callbacks），是功能通道而非
+            # 展示冗余，"卡片消费即吞"会掐断它们。与 reasoning_callback
+            # 包装器同构（feed + 透传）。
+            _eid = _resolve_eid(eid)
+            if _eid:
+                try:
+                    from .hooks import on_tool_updated
+
+                    on_tool_updated(
+                        message_id=_eid,
+                        tool_name=tool_name or "",
+                        status="started",
+                        detail=_stable_args_preview(
+                            tool_name or "",
+                            args[0] if args else kwargs.get("display_args"),
+                        ),
+                        tool_call_id=str(call_id or ""),
+                    )
+                except Exception:
+                    _logger.debug("HLS: tool_start_wrapper exception", exc_info=True)
+            if _orig_tool_start is not None:
+                return _orig_tool_start(call_id, tool_name, *args, **kwargs)
+
+        def _tool_complete_wrapper(call_id, tool_name=None, *args, **kwargs):
+            # 扇出语义同上：喂卡 + 透传 orig（approval 会话的
+            # combined_tool_complete_callback 承担 SSE/任务卡收尾）。
+            _eid = _resolve_eid(eid)
+            # hermes 调用形状: (call_id, name, display_args, result)
+            _result = (
+                kwargs["result"]
+                if "result" in kwargs
+                else (args[1] if len(args) > 1 else None)
+            )
+            if _eid:
+                try:
+                    from .hooks import on_tool_updated
+
+                    is_error, suffix = _stable_detect_failure(
+                        tool_name or "", _result
+                    )
+                    on_tool_updated(
+                        message_id=_eid,
+                        tool_name=tool_name or "",
+                        status="error" if is_error else "completed",
+                        detail=(suffix or "").strip() if is_error else "",
+                        tool_call_id=str(call_id or ""),
+                    )
+                except Exception:
+                    _logger.debug(
+                        "HLS: tool_complete_wrapper exception", exc_info=True
+                    )
+            if _orig_tool_complete is not None:
+                return _orig_tool_complete(call_id, tool_name, *args, **kwargs)
+
+        agent.tool_start_callback = _tool_start_wrapper
+        agent.tool_complete_callback = _tool_complete_wrapper
+        setattr(agent.tool_start_callback, "_hls_wrapper", True)
+        setattr(agent.tool_complete_callback, "_hls_wrapper", True)
+        # started/completed 由稳定 ID 路径接管，progress 包装器据此防双记。
+        agent._hls_stable_tool_ids = True
+        _logger.debug(
+            "HLS: _maybe_wrap_callbacks tool_start/complete_callback wrapped (stable call_id)"
+        )
 
     # Mark wrapper functions so guard can detect them next time
     if getattr(agent, "stream_delta_callback", None):

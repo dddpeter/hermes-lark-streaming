@@ -929,6 +929,80 @@ def _safe_action_value_repr(action_value: Any) -> str:
         return repr(action_value)[:200]
 
 
+def _make_feishu_adapter_retire_clarify(orig_retire: Callable | None) -> Callable:
+    """v1.8.8: 构建安装到补丁 FeishuAdapter 上的 ``retire_clarify_card`` 方法。
+
+    官方钩子（gateway/platforms/base.py send_clarify docstring 声明 MAY-style；
+    gateway/run_inbound.py 与 gateway/plugin_command_choice.py 是调用方）：clarify
+    在**未点击**结束——用户直接打字作答（数字直选 / Other 后输入）、超时、被后续
+    自由 prose 取代或取消——时 gateway 会 await 本方法，要求持久卡"不再看起来
+    可回答"。此前插件不实现它，卡片按钮在这些场景下永久保持可点的假活状态。
+
+    契约要点（塑造本实现）：
+    - 内部状态的 pop 必须在**第一个 await 之前**同步完成——agent 线程自己的
+      过期通知可能随后在另一线程触发，届时必须查不到残留；
+    - 失败绝不向外抛（gateway 侧有 try/except，但这里保持安静更稳）；
+    - ``orig_retire`` 是类自身已定义的原实现（现版 stock FeishuAdapter 没有；
+      未来 hermes 若原生实现则先调原方法，插件卡收尾在其后）。
+    """
+
+    async def _retire_clarify_card(self_feishu, clarify_id, notice=""):
+        # ── 同步 pop：契约要求先于任何 await ──
+        with _clarify_lock:
+            card_msg_id = _clarify_card_msg_ids.pop(clarify_id, "")
+            question = _clarify_questions.pop(clarify_id, "")
+            _clarify_choices.pop(clarify_id, None)
+            _clarify_selections.pop(clarify_id, None)
+            _clarify_timestamps.pop(clarify_id, None)
+
+        if orig_retire is not None:
+            try:
+                await orig_retire(self_feishu, clarify_id, notice)
+            except Exception:
+                _logger.debug(
+                    "clarify card: orig retire_clarify_card failed (non-fatal) "
+                    "clarify_id=%s",
+                    (clarify_id or "?")[:12],
+                    exc_info=True,
+                )
+
+        if not card_msg_id:
+            # 无插件渲染的卡（如降级纯文本路径），无事可做。
+            return
+
+        try:
+            from ..cardkit import build_clarify_retired_card
+            from ..controller import get_controller
+
+            ctrl = get_controller()
+            if not ctrl or not ctrl._client_ok():
+                _logger.debug(
+                    "clarify card: retire skipped, controller unavailable "
+                    "clarify_id=%s",
+                    (clarify_id or "?")[:12],
+                )
+                return
+            await ctrl._client.update_card(
+                card_msg_id,
+                build_clarify_retired_card(question=question, notice=notice),
+            )
+            _logger.info(
+                "clarify card retired: clarify_id=%s card_msg_id=%s notice=%r",
+                (clarify_id or "?")[:12],
+                (card_msg_id or "?")[:12],
+                (notice or "")[:40],
+            )
+        except Exception:
+            _logger.warning(
+                "clarify card: retire update failed (buttons stay, TTL prunes "
+                "state) clarify_id=%s",
+                (clarify_id or "?")[:12],
+                exc_info=True,
+            )
+
+    return _retire_clarify_card
+
+
 def _wrap_handle_card_action_event(original_method: Callable) -> Callable:
     """Wrap ``FeishuAdapter._handle_card_action_event`` — the REAL interception point."""
 

@@ -14,30 +14,61 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-import lark_oapi as lark
-from lark_oapi.api.cardkit.v1 import (
-    BatchUpdateCardRequest,
-    BatchUpdateCardRequestBody,
-    Card,
-    ContentCardElementRequest,
-    ContentCardElementRequestBody,
-    CreateCardRequest,
-    CreateCardRequestBody,
-    SettingsCardRequest,
-    SettingsCardRequestBody,
-    UpdateCardRequest,
-    UpdateCardRequestBody,
-)
-from lark_oapi.api.im.v1 import (
-    CreateImageRequest,
-    CreateImageRequestBody,
-    CreateMessageRequest,
-    CreateMessageRequestBody,
-    PatchMessageRequest,
-    PatchMessageRequestBody,
-    ReplyMessageRequest,
-    ReplyMessageRequestBody,
-)
+# v1.8.8: lark_oapi 惰性导入。冷 pyc 下 `import lark_oapi` 编译可达 ~10s
+# （hermes 自更新轮换 installs 环境后首轮必现），此前它在插件加载器的
+# 10s 窗口内执行（plugin register → patching → controller → 本模块），
+# headless CLI 与更新后的网关首轮启动都会 "load timed out after 10s"。
+# 全部符号改为首次构造 FeishuClient 时注入；register/import 链零 lark
+# 依赖。所有使用点都在 FeishuClient 实例方法内（构建器调用），构造先于
+# 任何使用，__init__ 即唯一咽喉。
+_lark_names_loaded = False
+
+
+def _ensure_lark_names() -> None:
+    """首次用卡前注入 lark_oapi 符号（幂等，进程内一次）。"""
+    global lark, BatchUpdateCardRequest, BatchUpdateCardRequestBody, Card
+    global ContentCardElementRequest, ContentCardElementRequestBody
+    global CreateCardRequest, CreateCardRequestBody, SettingsCardRequest
+    global SettingsCardRequestBody, UpdateCardRequest, UpdateCardRequestBody
+    global CreateImageRequest, CreateImageRequestBody, CreateMessageRequest
+    global CreateMessageRequestBody, PatchMessageRequest, PatchMessageRequestBody
+    global ReplyMessageRequest, ReplyMessageRequestBody
+    global _lark_names_loaded
+
+    if _lark_names_loaded:
+        return
+    import lark_oapi as lark
+    from lark_oapi.api.cardkit.v1 import (
+        BatchUpdateCardRequest,
+        BatchUpdateCardRequestBody,
+        Card,
+        ContentCardElementRequest,
+        ContentCardElementRequestBody,
+        CreateCardRequest,
+        CreateCardRequestBody,
+        SettingsCardRequest,
+        SettingsCardRequestBody,
+        UpdateCardRequest,
+        UpdateCardRequestBody,
+    )
+    from lark_oapi.api.im.v1 import (
+        CreateImageRequest,
+        CreateImageRequestBody,
+        CreateMessageRequest,
+        CreateMessageRequestBody,
+        PatchMessageRequest,
+        PatchMessageRequestBody,
+        ReplyMessageRequest,
+        ReplyMessageRequestBody,
+    )
+    global _TOKEN_ERROR_BASES
+    try:
+        from lark_oapi.core.exception import ObtainAccessTokenException
+
+        _TOKEN_ERROR_BASES = (ObtainAccessTokenException,)
+    except ImportError:
+        _TOKEN_ERROR_BASES = ()
+    _lark_names_loaded = True
 
 # v1.3.4 fix (P1): lark_oapi SDK 的 Transport.aexecute 不捕获网络异常，
 try:
@@ -45,11 +76,9 @@ try:
     _NETWORK_ERROR_BASES: tuple = (httpx.RequestError, httpx.TimeoutException)
 except ImportError:  # 极端情况下 httpx 不可用（lark_oapi 依赖它，不应发生）
     _NETWORK_ERROR_BASES = ()
-try:
-    from lark_oapi.core.exception import ObtainAccessTokenException
-    _TOKEN_ERROR_BASES: tuple = (ObtainAccessTokenException,)
-except ImportError:
-    _TOKEN_ERROR_BASES = ()
+# v1.8.8: ObtainAccessTokenException 的导入（会拉起整个 lark_oapi）同样
+# 挪入 _ensure_lark_names()；模块级先空表，FeishuClient 构造时填充。
+_TOKEN_ERROR_BASES: tuple = ()
 
 _logger = logging.getLogger("hermes_lark_streaming")
 
@@ -200,6 +229,7 @@ class FeishuClient:
     """飞书 REST API 封装 — 基于 lark-oapi SDK."""
 
     def __init__(self, config: FeishuClientConfig) -> None:
+        _ensure_lark_names()
         self.config = config
         builder = lark.Client.builder().app_id(config.app_id).app_secret(config.app_secret)
         # .domain() 只接受域名（如 https://open.feishu.cn），不带 /open-apis 后缀

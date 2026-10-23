@@ -10,7 +10,7 @@
 
 | 属性 | 值 |
 |------|-----|
-| 版本 | 1.8.2 (DEV) | 协议 | MIT | Python | ≥3.11 | 与上游 | ⚠️ **不兼容** |
+| 版本 | 1.8.8 | 协议 | MIT | Python | ≥3.11 | 与上游 | ⚠️ **不兼容** |
 
 ---
 
@@ -25,7 +25,8 @@
                ▼
             ├─ stream_delta_callback ── [Hook 4: on_answer_delta]
             ├─ reasoning_callback ──── [Hook 6: on_reasoning_delta]
-            ├─ tool_progress_callback [Hook 3: on_tool_updated]
+            ├─ tool_progress_callback [Hook 3: on_tool_updated·按名字]
+            ├─ tool_start/complete_cb [Hook 3: on_tool_updated·稳定call_id]  (v1.8.8)
             └─ background_review_cb ── [Hook 7: on_background_review]
 Cron: _deliver_result ── (v1.7.0: 无 hook —— _wrap_cron_deliver 直接调 ctrl._do_cron_deliver；RELAY 部署走 RelayAdapter.send_for_platform 包装器)
 Background: _run_background_task ── [Hook 1/2]
@@ -355,8 +356,10 @@ hermes gateway restart
 
 ## 12. 版本历史
 
+**v1.8.8 (2026-10-23)**：适配 hermes 现役版本（GatewayRunner mixin 化后双检出实测 11/11）——稳定 call_id 工具配对（并行同名工具不再错卡，工具失败正确显示 ❌；扇出语义透传 hermes 功能通道）+ `retire_clarify_card` 官方钩子（clarify 打字作答/超时/取消后卡片收尾停用按钮）+ 卡片宽度 `width_mode=fill`（`cardkit/elements.py CARD_WIDTH_MODE` 单点常量）+ FeishuAdapter 解析路径顺序修正（源码路径优先）+ A2A 子进程守卫回流（`HERMES_A2A_PEER` 跳过补丁）。
+
 详见 [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
-*Last updated: 2026-09-08 | Version: 1.8.2*
+*Last updated: 2026-10-23 | Version: 1.8.8*

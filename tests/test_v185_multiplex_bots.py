@@ -17,7 +17,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from hermes_lark_streaming.config import reader as cfg_reader
 from hermes_lark_streaming.controller import core as ctrl_core
 

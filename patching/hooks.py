@@ -159,13 +159,18 @@ def on_tool_updated(
     tool_name: str,
     status: str,
     detail: str = "",
+    tool_call_id: str = "",
 ) -> bool:
-    """[注入点 3] progress_callback — tool.updated."""
+    """[注入点 3] progress_callback — tool.updated.
+
+    v1.8.8: tool_call_id — 稳定工具调用 ID（新版 hermes 的
+    tool_start_callback / tool_complete_callback 路径传入），空串 = 按名字配对。"""
     ctrl.on_tool_update(
         message_id=message_id,
         tool_name=tool_name,
         status=status,
         detail=detail,
+        tool_call_id=tool_call_id,
     )
     return True
 

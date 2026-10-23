@@ -7,7 +7,15 @@ from typing import TYPE_CHECKING, Any
 
 from .i18n import _T, _i18n, _t
 
+# v1.8.8: 卡片整体宽度档位（官方 config.width_mode 三档枚举：default=PC 宽版
+# 上限 600px / compact=400px / fill=撑满聊天窗口自适应）。此前不填=default；
+# 现统一 fill，与聊天消息同宽。所有建卡点（cards/special/aowen）共用此常量；
+# feishu/client.py 的 cardkit settings 更新是存量卡配置（streaming_mode/
+# summary），width_mode 属建卡期属性，不在其内。
+CARD_WIDTH_MODE = "fill"
+
 __all__ = [
+    "CARD_WIDTH_MODE",
     "STREAMING_ELEMENT_ID",
     "ANSWER_ELEMENT_ID",
     "UNIFIED_PANEL_ELEMENT_ID",

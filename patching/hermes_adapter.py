@@ -15,9 +15,34 @@ _logger = logging.getLogger("hermes_lark_streaming")
 class HermesCompat:
     """Encapsulates all Hermes internal module access."""
 
-    def __init__(self):
+    # 类级默认：测试用 __new__ 绕过 __init__ 时 _import 仍可判定模式。
+    _sys_modules_only: bool = False
+
+    def __init__(self, *, sys_modules_only: bool = False):
+        """v1.8.8: *sys_modules_only* — 只从 sys.modules 解析，不做任何
+        fresh import（register 阶段专用）。
+
+        headless CLI 进程（hermes chat / plugins / cron 子进程）里 fresh
+        import 这些模块会拖上整棵 agent/gateway 模块树（实测 run_agent
+        冷导入 ~15s，远超 hermes 插件加载器 10s 窗口 → "load timed out
+        after 10s"）；更早的 A2A 场景直接死锁插件发现（见 plugin/
+        __init__.py 的 HERMES_A2A_PEER 守卫）。补丁就绪的进程里这些模块
+        必然已在 sys.modules；冷启动的网关进程由 patching 的延迟补丁
+        线程在加载器窗口之外用 fresh 模式补齐。
+        """
+        self._sys_modules_only = sys_modules_only
         self._detect_version()
         self._resolve_modules()
+
+    def _import(self, mod_path: str) -> Any | None:
+        """按模式导入：sys_modules_only 只查缓存（缺失返回 None 不抛）；
+        fresh 模式 importlib.import_module（ImportError 吞掉返回 None）。"""
+        if self._sys_modules_only:
+            return sys.modules.get(mod_path)
+        try:
+            return importlib.import_module(mod_path)
+        except ImportError:
+            return None
 
     def _detect_version(self) -> None:
         """Detect Hermes version from various sources."""
@@ -43,7 +68,12 @@ class HermesCompat:
         _logger.info("HLS: Hermes version detected: %s", self.hermes_version)
 
     def _resolve_modules(self) -> None:
-        """Resolve all Hermes internal modules, recording what's available."""
+        """Resolve all Hermes internal modules, recording what's available.
+
+        v1.8.8: 全部经 self._import（sys_modules_only 模式下零 fresh
+        import）。部分初始化（正在导入中）的模块取属性失败按缺失处理，
+        交给延迟补丁线程兜底。
+        """
         self.gateway_runner_class: Any | None = None
         self.aiagent_class: Any | None = None
         self.feishu_adapter_class: Any | None = None
@@ -53,21 +83,21 @@ class HermesCompat:
         self.run_agent_module: Any | None = None
 
         # GatewayRunner
-        try:
-            from gateway.run import GatewayRunner
-
-            self.gateway_runner_class = GatewayRunner
-        except (ImportError, AttributeError):
-            _logger.debug("HLS: GatewayRunner not available yet")
+        gw_mod = self._import("gateway.run")
+        if gw_mod is not None:
+            cls = getattr(gw_mod, "GatewayRunner", None)
+            if cls is not None:
+                self.gateway_runner_class = cls
+            else:
+                _logger.debug("HLS: gateway.run loaded but GatewayRunner not defined yet")
 
         # AIAgent
-        try:
-            from run_agent import AIAgent
-
-            self.aiagent_class = AIAgent
-            self.run_agent_module = sys.modules.get("run_agent")
-        except (ImportError, AttributeError):
-            _logger.debug("HLS: AIAgent not available yet")
+        ra_mod = self._import("run_agent")
+        if ra_mod is not None:
+            cls = getattr(ra_mod, "AIAgent", None)
+            if cls is not None:
+                self.aiagent_class = cls
+                self.run_agent_module = ra_mod
 
         # FeishuAdapter — 抽取到 _resolve_feishu_adapter()，
         # 便于 resolve_feishu_adapter_class_fresh() 复用（v1.4.0: fix deferred loading patch miss）
@@ -75,37 +105,36 @@ class HermesCompat:
 
         # Cron scheduler
         for mod_name in ("cron.scheduler", "gateway.cron.scheduler"):
-            try:
-                mod = importlib.import_module(mod_name)
-                if hasattr(mod, "_deliver_result"):
-                    self.cron_scheduler_module = mod
-                    break
-            except ImportError:
-                continue
+            mod = self._import(mod_name)
+            if mod is not None and hasattr(mod, "_deliver_result"):
+                self.cron_scheduler_module = mod
+                break
 
         # Conversation loop (with namespace collision workaround)
         self._resolve_conversation_loop()
 
     def _resolve_feishu_adapter(self) -> Any | None:
         """Resolve FeishuAdapter class through the gateway's namespace."""
-        # 顺序很关键：真身（hermes_plugins.feishu_platform.adapter）优先，确保
-        # 如果 deferred loader 已触发，我们能拿到 gateway 实际使用的 class object。
+        # v1.8.8: 顺序修正。现役 hermes（v0.21+，GatewayRunner mixin 化重构
+        # 之后）的 platform_registry 走 deferred loader，最终 import 的就是
+        # 源码路径 plugins.platforms.feishu.adapter——运行时真身与本路径解析
+        # 出的是同一个模块对象，类身份一致。旧首选 hermes_plugins.feishu_
+        # platform.adapter 属 v0.17–v0.21 时代的"真身/替身"双类结构，该
+        # 路径已消亡（现役两版本均无 hermes_plugins 包），降级为末位兜底
+        # 以兼容仍跑老版本的部署，避免每次 apply_patches 白吃一次
+        # ImportError。
         _feishu_import_paths = [
-            "hermes_plugins.feishu_platform.adapter",  # Hermes v0.17+ (gateway runtime 真身)
-            "plugins.platforms.feishu.adapter",  # Source path (替身，always available)
+            "plugins.platforms.feishu.adapter",  # 现役真身（source path，deferred loader 的最终目标）
             "gateway.platforms.feishu",  # Legacy path (Hermes < v0.17)
+            "hermes_plugins.feishu_platform.adapter",  # 已消亡 (v0.17–v0.21 双类结构)，末位兜底
         ]
         for _mod_path in _feishu_import_paths:
-            try:
-                mod = importlib.import_module(_mod_path)
-                if hasattr(mod, "FeishuAdapter"):
-                    cls = getattr(mod, "FeishuAdapter")
+            mod = self._import(_mod_path)
+            if mod is not None:
+                cls = getattr(mod, "FeishuAdapter", None)
+                if cls is not None:
                     _logger.debug("HLS: FeishuAdapter resolved via %s", _mod_path)
                     return cls
-            except (ImportError, AttributeError):
-                if _mod_path == "hermes_plugins.feishu_platform.adapter":
-                    pass
-                continue
         _logger.debug("HLS: FeishuAdapter not available via any import path")
         return None
 
@@ -124,6 +153,11 @@ class HermesCompat:
                 self.conversation_loop_func = func
                 _logger.debug("HLS: conversation_loop resolved via sys.modules")
                 return
+
+        # Strategy 2/3（anchor 文件加载 / 标准导入）是 fresh import——
+        # sys_modules_only 模式（register 阶段）跳过，交给延迟补丁线程。
+        if self._sys_modules_only:
+            return
 
         # Strategy 2: Anchor-based discovery
         for anchor_name in ("gateway.run", "run_agent"):
