@@ -9,7 +9,7 @@ import time
 # fragment cache (cardkit/elements.py) keys rendered fragments by these uids.
 _FRAGMENT_UID_SEQ = itertools.count(1)
 
-# v1.8.3: appended when answer_text hits _MAX_ANSWER_CHARS (head kept).
+# v1.8.9 (P2-8): appended when answer_text hits the STORAGE cap (head kept).
 _ANSWER_TRUNCATED_NOTICE = "\n\n> ⚠️ 内容过长，已截断显示 / Content truncated: answer exceeds card limit"
 
 class ReasoningRound:
@@ -61,7 +61,15 @@ class UnifiedLinearState:
     # multi-MB answers grew the escape cache, every flush payload AND the
     # seal-time full re-escape. Head-window policy: keep the FIRST cap chars
     # + a visible notice, drop everything after.
+    #
+    # v1.8.9 (P2-8): 单一 50K 上限拆成两级。_MAX_ANSWER_CHARS 仍是单个流式
+    # 元素的展示上限——escaped_answer_view 只携带该前缀，约束每次 flush 的
+    # 载荷体积；存储上限挪到新的 _MAX_ANSWER_STORE_CHARS，尾部只在触达这一
+    # 级才丢弃。此前 >50K 的答案尾部被直接砍掉（用户实测长 note 被截）；
+    # 现在 ≤150K 的答案完整保留在 answer_text，由封卡侧按 ## 标题切成多个
+    # markdown 元素写出（controller/linear_mixin._answer_seal_actions）。
     _MAX_ANSWER_CHARS = 50_000
+    _MAX_ANSWER_STORE_CHARS = 150_000
 
     def __init__(self) -> None:
         # Reasoning tracking
@@ -131,12 +139,12 @@ class UnifiedLinearState:
         """Answer text increment. Finalizes any in-progress reasoning first."""
         self._finalize_current_reasoning()
         if self._answer_truncated:
-            # v1.8.3: head-window policy — once capped, later deltas are
-            # dropped entirely (the full answer still lives in hermes' own
-            # completion payload; the card shows the capped head + notice).
+            # v1.8.3: head-window policy — once the STORAGE cap is hit, later
+            # deltas are dropped entirely (the full answer still lives in
+            # hermes' own completion payload; the card shows head + notice).
             return
         self.answer_text += text
-        max_chars = self._MAX_ANSWER_CHARS
+        max_chars = self._MAX_ANSWER_STORE_CHARS
         if len(self.answer_text) > max_chars:
             self.answer_text = self.answer_text[:max_chars] + _ANSWER_TRUNCATED_NOTICE
             self._answer_truncated = True
@@ -148,9 +156,10 @@ class UnifiedLinearState:
     def replace_answer_text(self, text: str) -> None:
         """v1.8.3: directly replace answer_text (on_completed MISMATCH path)
         with cap enforcement — replaces the previous raw assignment + manual
-        reset_escape_cache()/answer_dirty sequence in controller/core.py."""
+        reset_escape_cache()/answer_dirty sequence in controller/core.py.
+        v1.8.9 (P2-8): cap is the STORAGE bound (see _MAX_ANSWER_STORE_CHARS)."""
         self.answer_text = text
-        max_chars = self._MAX_ANSWER_CHARS
+        max_chars = self._MAX_ANSWER_STORE_CHARS
         if len(self.answer_text) > max_chars:
             self.answer_text = self.answer_text[:max_chars] + _ANSWER_TRUNCATED_NOTICE
             self._answer_truncated = True
@@ -159,7 +168,7 @@ class UnifiedLinearState:
 
     @property
     def answer_truncated(self) -> bool:
-        """Whether answer_text hit the storage cap (head kept, tail dropped)."""
+        """Whether answer_text hit the STORAGE cap (head kept, tail dropped)."""
         return self._answer_truncated
 
     def panel_fragment_cache(self) -> dict:
@@ -195,7 +204,10 @@ class UnifiedLinearState:
         Anything else falls back to a full recompute, so worst case equals the
         old behavior — the fast path can never produce a different escape.
         """
-        src = self.answer_text
+        # v1.8.9 (P2-8): 流式元素只携带前 _MAX_ANSWER_CHARS 个字符——超出
+        # 部分继续累积在 answer_text 里，由封卡按 ## 标题分块补全，不再触发
+        # 截断。增量缓存以该前缀为源，缓存条件语义不变。
+        src = self.answer_text[: self._MAX_ANSWER_CHARS]
         if not src:
             return src
         cache = self._escaped_cache
@@ -327,8 +339,12 @@ class UnifiedLinearState:
     @property
     def has_dirty(self) -> bool:
         """Whether any dirty data needs flushing to the card."""
+        # v1.8.9 (P1-2): 补 tool_steps_dirty。此前"工具状态变了但答案文本没变"
+        # 的 flush 会被静默丢掉——长任务里工具面板长时间不刷新（用户看到卡住），
+        # 直到下一次 answer_delta 顺带把面板带出去。判据与 answer_dirty 同源。
         return (
             self.panel_dirty
             or self.answer_dirty
+            or self.tool_steps_dirty
             or bool(self.bg_review_messages)
         )

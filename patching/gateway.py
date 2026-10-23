@@ -294,6 +294,50 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
 def _wrap_run_agent(orig: Callable) -> Callable:
     """Inject COMPLETE hook after agent runs; propagate event_message_id."""
 
+    # v1.8.9 (§5.2-A): 启动期对账 wrapper 锁死的参数名。**kwargs 透传使
+    # hermes「新增 kwarg」安全；真正的炸点是「删除/改名」这 11 个之一
+    # （wrapper 转发时 unexpected keyword → TypeError）与「新增第 6 个
+    # 位置参数」（静默错绑进 session_key）。基线来自 hermes
+    # gateway/run_turn.py _run_agent_inner 现役签名。
+    _EXPECTED_RUN_AGENT_PARAMS = (
+        "message",
+        "context_prompt",
+        "history",
+        "source",
+        "session_id",
+        "session_key",
+        "run_generation",
+        "_interrupt_depth",
+        "event_message_id",
+        "channel_prompt",
+    )
+    try:
+        import inspect
+
+        _sig = inspect.signature(orig)
+        _run_agent_param_names = set(_sig.parameters)
+        _has_var_keyword = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD
+            for p in _sig.parameters.values()
+        )
+    except (TypeError, ValueError):
+        _run_agent_param_names = None  # C 扩展/内置 — 无法内省（同 674 行兜底）
+        _has_var_keyword = False
+    if _run_agent_param_names is not None and not _has_var_keyword:
+        # 带 **kwargs 的透传签名（生产 0.21.4 的 GatewayRunner._run_agent 即
+        # (…, session_id, **turn_kwargs)）接受任意关键字转发——11 个参数名
+        # 折叠进 kwargs，**不是**漂移，不做名字对账（否则必误报）。只有全
+        # 显式签名才可能因缺名而 TypeError。
+        _missing = [
+            n for n in _EXPECTED_RUN_AGENT_PARAMS if n not in _run_agent_param_names
+        ]
+        if _missing:
+            _logger.warning(
+                "HLS: callback signature drift — _run_agent_inner 缺少参数 %s；"
+                "wrapper 转发将 TypeError，插件需要适配新 hermes 签名",
+                _missing,
+            )
+
     @functools.wraps(orig)
     async def wrapper(
         self,

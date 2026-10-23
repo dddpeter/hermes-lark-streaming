@@ -576,7 +576,11 @@ class TestAnswerLengthCap:
     def _state_with_cap(monkeypatch, cap: int):
         from hermes_lark_streaming.state.linear import UnifiedLinearState
 
-        monkeypatch.setattr(UnifiedLinearState, "_MAX_ANSWER_CHARS", cap)
+        # v1.8.9 (P2-8): 截断触发点挪到存储上限 _MAX_ANSWER_STORE_CHARS；
+        # 展示上限 _MAX_ANSWER_CHARS 放大到 10 倍，使 escaped_answer_view
+        # 仍等于全文（保持本组 v1.8.3 断言语义不变）。
+        monkeypatch.setattr(UnifiedLinearState, "_MAX_ANSWER_STORE_CHARS", cap)
+        monkeypatch.setattr(UnifiedLinearState, "_MAX_ANSWER_CHARS", cap * 10)
         return UnifiedLinearState()
 
     def test_answer_delta_truncates_with_notice(self, monkeypatch) -> None:

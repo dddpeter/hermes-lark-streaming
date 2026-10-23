@@ -14,6 +14,7 @@ from ..cardkit import (
     _LOADING_HINT_ELEMENT_ID,
     ANSWER_ELEMENT_ID,
     UNIFIED_PANEL_ELEMENT_ID,
+    _collapse_hint_digit_sum,
     _count_tag_objects,
     _is_collapse_hint_child,
     _streaming_element,
@@ -144,6 +145,75 @@ def _answer_fast_stream_sec(cfg: Any) -> float:
         return cfg.answer_flush_interval_sec
     except Exception:
         return 0.150
+
+
+def _answer_seal_chunk_chars(cfg: Any) -> int:
+    """v1.8.9 (P2-8): 封卡切分的目标块字符数（Config.answer_chunk_chars，
+    默认 20000——移动端超长单元素白屏的经验阈值）。getattr 兜底仅服务于
+    测试替身；clamp 与 Config 侧一致。"""
+    try:
+        val = int(getattr(cfg, "answer_chunk_chars", 20_000))
+    except (TypeError, ValueError):
+        return 20_000
+    return max(4_000, min(50_000, val))
+
+
+_ANSWER_HEADING_RE = _re.compile(r"^#{1,6}\s")
+
+
+def _split_answer_chunks(text: str, max_chars: int) -> list[str]:
+    """v1.8.9 (P2-8): 把长答案按 ATX 标题行（#~######）切成 ≤ max_chars 的块。
+
+    切点只落在标题行首（块边界天然是渲染安全位）；围栏代码块内的 ``#`` 注释
+    行不算标题（```/~~~ 开关状态扫描）。无标题可借或单节超长时按字符硬切。
+    首块由调用方重写进 ANSWER 元素，其余块作为追加 markdown 元素插在
+    loading icon 之前。"""
+    if max_chars <= 0 or len(text) <= max_chars:
+        return [text]
+
+    bounds: list[int] = []
+    in_fence = False
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+        elif not in_fence and _ANSWER_HEADING_RE.match(line):
+            bounds.append(offset)
+        offset += len(line)
+
+    sections: list[str] = []
+    prev = 0
+    for b in bounds + [len(text)]:
+        if b > prev:
+            sections.append(text[prev:b])
+        prev = b
+    if not sections:
+        sections = [text]
+
+    # 贪心装箱：能并进当前块就并，装不下就开新块
+    chunks: list[str] = []
+    cur = ""
+    for sec in sections:
+        if not cur:
+            cur = sec
+        elif len(cur) + len(sec) <= max_chars:
+            cur += sec
+        else:
+            chunks.append(cur)
+            cur = sec
+    if cur:
+        chunks.append(cur)
+
+    # 单节超过 max_chars（无标题的巨块）→ 硬切
+    out: list[str] = []
+    for c in chunks:
+        while len(c) > max_chars:
+            out.append(c[:max_chars])
+            c = c[max_chars:]
+        if c:
+            out.append(c)
+    return out or [text]
 
 
 class UnifiedControllerMixin:
@@ -299,6 +369,37 @@ class UnifiedControllerMixin:
 
         session.flush.schedule_update(lambda: self._do_unified_flush(session))
 
+    def _build_panel_payload(
+        self,
+        session: CardSession,
+        state: UnifiedLinearState,
+        *,
+        current_reasoning_text: str | None = None,
+        expanded: bool,
+        fragment_cache: bool = False,
+    ) -> dict[str, Any]:
+        """v1.8.9 (P2-1): build_unified_panel 的参数块在 flush/seal/drain
+        共 7 个调用点逐字重复（差异只有 current_reasoning_text、expanded
+        和是否带 fragment_cache 三处），收敛到这里。current_reasoning_text
+        传 None 表示取 state.current_reasoning_text（流式期），seal 侧传 ""。"""
+        return build_unified_panel(
+            reasoning_rounds=state.reasoning_rounds,
+            current_reasoning_text=(
+                state.current_reasoning_text
+                if current_reasoning_text is None
+                else current_reasoning_text
+            ),
+            tool_steps=session.tool_use.build_display_steps(),
+            tool_elapsed_ms=session.tool_use.elapsed_ms,
+            show_reasoning=self._cfg.show_reasoning,
+            expanded=expanded,
+            panel_events=state.panel_events,
+            max_tool_steps=self._cfg.max_tool_steps,
+            max_reasoning_rounds=self._cfg.max_reasoning_rounds,
+            # v1.8.3: reuse rendered fragments of immutable items.
+            fragment_cache=state.panel_fragment_cache() if fragment_cache else None,
+        )
+
     async def _do_unified_flush(self, session: CardSession) -> None:
         """Unified panel flush — max 2 API calls per flush cycle."""
         if session.is_terminal_phase or session.state == COMPLETING:
@@ -321,19 +422,11 @@ class UnifiedControllerMixin:
 
             # ── Path A: Has reasoning or tools → add unified panel ──
             if state.panel_visible:
-                all_tool_steps = session.tool_use.build_display_steps()
-                panel = build_unified_panel(
-                    reasoning_rounds=state.reasoning_rounds,
-                    current_reasoning_text=state.current_reasoning_text,
-                    tool_steps=all_tool_steps,
-                    tool_elapsed_ms=session.tool_use.elapsed_ms,
-                    show_reasoning=self._cfg.show_reasoning,
+                panel = self._build_panel_payload(
+                    session,
+                    state,
                     expanded=self._cfg.streaming_panel_expanded,
-                    panel_events=state.panel_events,
-                    max_tool_steps=self._cfg.max_tool_steps,
-                    max_reasoning_rounds=self._cfg.max_reasoning_rounds,
-                    # v1.8.3: reuse rendered fragments of immutable items.
-                    fragment_cache=state.panel_fragment_cache(),
+                    fragment_cache=True,
                 )
                 new_elements.append(panel)
 
@@ -507,6 +600,10 @@ class UnifiedControllerMixin:
             # (was: full-text escape on every flush).
             if state.answer_dirty:
                 content = state.escaped_answer_view() or " "
+                # v1.8.9 (P0-2 关联): 记录水位。await 期间新到的 delta 会
+                # 重置 answer_dirty；成功后仅在文本未再增长时才清 dirty，
+                # 否则 lost-update 会把最后一段增量困住直到封卡。
+                _src_len = len(state.answer_text)
                 session.sequence += 1
                 try:
                     await self._client.cardkit_stream_element(
@@ -515,7 +612,8 @@ class UnifiedControllerMixin:
                         content,
                         sequence=session.sequence,
                     )
-                    state.answer_dirty = False
+                    if len(state.answer_text) == _src_len:
+                        state.answer_dirty = False
                 except FeishuAPIError as e:
                     if e.code == CARDKIT_STREAMING_CLOSED:
                         session._streaming_closed = True
@@ -533,19 +631,11 @@ class UnifiedControllerMixin:
         if state.panel_dirty:
             if "panel" in session._creation_stages:
                 # Panel exists — update its content
-                all_tool_steps = session.tool_use.build_display_steps()
-                panel = build_unified_panel(
-                    reasoning_rounds=state.reasoning_rounds,
-                    current_reasoning_text=state.current_reasoning_text,
-                    tool_steps=all_tool_steps,
-                    tool_elapsed_ms=session.tool_use.elapsed_ms,
-                    show_reasoning=self._cfg.show_reasoning,
+                panel = self._build_panel_payload(
+                    session,
+                    state,
                     expanded=self._cfg.streaming_panel_expanded,
-                    panel_events=state.panel_events,
-                    max_tool_steps=self._cfg.max_tool_steps,
-                    max_reasoning_rounds=self._cfg.max_reasoning_rounds,
-                    # v1.8.3: reuse rendered fragments of immutable items.
-                    fragment_cache=state.panel_fragment_cache(),
+                    fragment_cache=True,
                 )
                 actions.append(
                     {
@@ -561,19 +651,11 @@ class UnifiedControllerMixin:
                 )
             elif "answer" in session._creation_stages:
                 # ── Bug fix (v1.0.5): Late-arriving reasoning/tools ──
-                all_tool_steps = session.tool_use.build_display_steps()
-                panel = build_unified_panel(
-                    reasoning_rounds=state.reasoning_rounds,
-                    current_reasoning_text=state.current_reasoning_text,
-                    tool_steps=all_tool_steps,
-                    tool_elapsed_ms=session.tool_use.elapsed_ms,
-                    show_reasoning=self._cfg.show_reasoning,
+                panel = self._build_panel_payload(
+                    session,
+                    state,
                     expanded=self._cfg.streaming_panel_expanded,
-                    panel_events=state.panel_events,
-                    max_tool_steps=self._cfg.max_tool_steps,
-                    max_reasoning_rounds=self._cfg.max_reasoning_rounds,
-                    # v1.8.3: reuse rendered fragments of immutable items.
-                    fragment_cache=state.panel_fragment_cache(),
+                    fragment_cache=True,
                 )
                 actions.append(
                     {
@@ -695,6 +777,8 @@ class UnifiedControllerMixin:
         if state.answer_dirty and "answer" in session._creation_stages:
             # v1.7.0 (R2-01): incremental escape cache (was full-text escape).
             content = state.escaped_answer_view() or " "
+            # v1.8.9 (P0-2 关联): 同上——水位守卫防 lost-update 清 dirty。
+            _src_len = len(state.answer_text)
             session.sequence += 1
             try:
                 await self._client.cardkit_stream_element(
@@ -703,7 +787,8 @@ class UnifiedControllerMixin:
                     content,
                     sequence=session.sequence,
                 )
-                state.answer_dirty = False
+                if len(state.answer_text) == _src_len:
+                    state.answer_dirty = False
             except FeishuAPIError as e:
                 if e.code == CARDKIT_STREAMING_CLOSED:
                     if session._streaming_closed_logged:
@@ -767,6 +852,62 @@ class UnifiedControllerMixin:
         ) or answer:
             self._schedule_linear_flush(session)
 
+    def _answer_seal_actions(
+        self, session: CardSession, state: UnifiedLinearState
+    ) -> list[dict[str, Any]]:
+        """v1.8.9 (P2-8): 封卡答案写入。≤ chunk 上限时仍是单个 partial_update
+        （与 v1.8.9 之前行为逐字节一致）；超限则按 ## 标题切块——首块重写
+        ANSWER 元素，其余块作为追加 markdown 元素插在 loading icon 之前
+        （即页脚之前、答案之后）。此前 answer_text 被 state 侧 50K 单上限
+        截尾，用户实测长 note 被砍；现在 state 只在 150K 存储上限才丢尾，
+        50K~150K 的答案在这里分块完整上卡。"""
+        chunk_chars = _answer_seal_chunk_chars(self._cfg)
+
+        def _optimize(raw: str) -> str:
+            return (
+                escape_markdown_asterisks(
+                    _downgrade_tables(optimize_markdown_style(raw))
+                )
+                or " "
+            )
+
+        chunks = _split_answer_chunks(state.answer_text, chunk_chars)
+        answer_update: dict[str, Any] = {
+            "action": "partial_update_element",
+            "params": {
+                "element_id": ANSWER_ELEMENT_ID,
+                "partial_element": {"content": _optimize(chunks[0])},
+            },
+        }
+        if len(chunks) == 1:
+            return [answer_update]
+        if _LOADING_ELEMENT_ID in session.existing_elements:
+            return [
+                answer_update,
+                {
+                    "action": "add_elements",
+                    "params": {
+                        "type": "insert_before",
+                        "target_element_id": _LOADING_ELEMENT_ID,
+                        "elements": [
+                            {"tag": "markdown", "content": _optimize(c)}
+                            for c in chunks[1:]
+                        ],
+                    },
+                },
+            ]
+        # loading icon 不在（异常路径）——退回单元素整写：宁可元素过大，
+        # 也不能让分块断在半空没有锚点。
+        return [
+            {
+                "action": "partial_update_element",
+                "params": {
+                    "element_id": ANSWER_ELEMENT_ID,
+                    "partial_element": {"content": _optimize(state.answer_text)},
+                },
+            }
+        ]
+
     async def _preservative_seal(
         self,
         session: CardSession,
@@ -804,17 +945,10 @@ class UnifiedControllerMixin:
                 if (
                     state.panel_dirty or state.tool_steps_dirty
                 ) and "panel" in session._creation_stages:
-                    all_tool_steps = session.tool_use.build_display_steps()
-                    panel = build_unified_panel(
-                        reasoning_rounds=state.reasoning_rounds,
-                        current_reasoning_text=state.current_reasoning_text,
-                        tool_steps=all_tool_steps,
-                        tool_elapsed_ms=session.tool_use.elapsed_ms,
-                        show_reasoning=self._cfg.show_reasoning,
+                    panel = self._build_panel_payload(
+                        session,
+                        state,
                         expanded=self._cfg.streaming_panel_expanded,
-                        panel_events=state.panel_events,
-                        max_tool_steps=self._cfg.max_tool_steps,
-                        max_reasoning_rounds=self._cfg.max_reasoning_rounds,
                     )
                     try:
                         session.sequence += 1
@@ -855,6 +989,8 @@ class UnifiedControllerMixin:
                 ):
                     # v1.7.0 (R2-01): incremental escape cache (was full-text escape).
                     content = state.escaped_answer_view() or " "
+                    # v1.8.9 (P0-2 关联): 水位守卫（见 _do_unified_flush）。
+                    _src_len = len(state.answer_text)
                     try:
                         session.sequence += 1
                         _logger.info(
@@ -868,7 +1004,8 @@ class UnifiedControllerMixin:
                             content,
                             sequence=session.sequence,
                         )
-                        state.answer_dirty = False
+                        if len(state.answer_text) == _src_len:
+                            state.answer_dirty = False
                     except FeishuAPIError as e:
                         # v1.1.1: 统一 fallback — 300309 和 300313 都改用 batch_update（不带 tag）
                         if (
@@ -904,17 +1041,11 @@ class UnifiedControllerMixin:
 
                 # ── Bug fix (v1.0.5): Only update panel if it was created ──
                 if "panel" in session._creation_stages:
-                    all_tool_steps = session.tool_use.build_display_steps()
-                    panel = build_unified_panel(
-                        reasoning_rounds=state.reasoning_rounds,
+                    panel = self._build_panel_payload(
+                        session,
+                        state,
                         current_reasoning_text="",
-                        tool_steps=all_tool_steps,
-                        tool_elapsed_ms=session.tool_use.elapsed_ms,
-                        show_reasoning=self._cfg.show_reasoning,
                         expanded=self._cfg.panel_expanded,
-                        panel_events=state.panel_events,
-                        max_tool_steps=self._cfg.max_tool_steps,
-                        max_reasoning_rounds=self._cfg.max_reasoning_rounds,
                     )
                     seal_actions.append(
                         {
@@ -936,23 +1067,9 @@ class UnifiedControllerMixin:
                 and state.answer_text
                 and "answer" in session._creation_stages
             ):
-                optimized_content = (
-                    escape_markdown_asterisks(
-                        _downgrade_tables(optimize_markdown_style(state.answer_text))
-                    )
-                    or " "
-                )
-                seal_actions.append(
-                    {
-                        "action": "partial_update_element",
-                        "params": {
-                            "element_id": ANSWER_ELEMENT_ID,
-                            "partial_element": {
-                                "content": optimized_content,
-                            },
-                        },
-                    }
-                )
+                # v1.8.9 (P2-8): 超长答案按 ## 标题分块上卡（见
+                # _answer_seal_actions），不再受单元素大小牵制。
+                seal_actions.extend(self._answer_seal_actions(session, state))
 
             # ── Step 3: Add footer + delete loading elements ──
             seal_actions.extend(
@@ -1001,12 +1118,12 @@ class UnifiedControllerMixin:
                     # Trim panel children from the front
                     children: list[dict] = panel.get("elements", [])
                     # Check if a collapse hint already exists
+                    # v1.8.9 (P2-4): 与 trim 后重找一致，走双语安全的
+                    # _is_collapse_hint_child（旧 "已折叠" 子串判定只认中文
+                    # content，漏认即多预留 1 个元素位、多折一条内容）。
                     hint_idx = None
                     for i, child in enumerate(children):
-                        if (
-                            isinstance(child.get("content"), str)
-                            and "已折叠" in child["content"]
-                        ):
+                        if _is_collapse_hint_child(child):
                             hint_idx = i
                             break
                     # If no hint exists yet, we'll need to add one (1 element), so account for it
@@ -1033,18 +1150,13 @@ class UnifiedControllerMixin:
                         _en_hint, _zh_hint = _T["collapse_hint_count"]
                         if hint_idx is not None:
                             old_hint = str(children[hint_idx].get("content", ""))
-                            # v1.7.0 (R4): sum ALL digit groups so both hint
-                            # formats count correctly — the seal format
-                            # "⚡ 还有 N 项已折叠" (one group) and the panel
-                            # builder format "⚡ 还有 X 轮早期推理、Y 步早期操作
-                            # 已折叠" (two groups whose SUM is the collapsed
-                            # total). The old "项"-anchored parser only
-                            # understood the seal format and silently dropped
-                            # the panel builder's already-collapsed count.
-                            existing_count = sum(
-                                int(_n) for _n in _re.findall(r"\d+", old_hint)
+                            # v1.8.9 (P2-4): 数字解析收敛到共享助手——同时算
+                            # 对 seal 格式（"⚡ 还有 N 项已折叠" 单数字）与
+                            # 面板构造器格式（"X 轮早期推理、Y 步早期操作"
+                            # 双数字求和，v1.7.0 R4 的语义原样搬入）。
+                            total_trimmed = (
+                                _collapse_hint_digit_sum(old_hint) + trimmed_count
                             )
-                            total_trimmed = existing_count + trimmed_count
                             children[hint_idx]["content"] = _zh_hint.format(
                                 total_trimmed
                             )
@@ -1159,17 +1271,11 @@ class UnifiedControllerMixin:
                         if state is not None:
                             # ── Bug fix (v1.0.5): Only update panel if it was created ──
                             if "panel" in session._creation_stages:
-                                all_tool_steps = session.tool_use.build_display_steps()
-                                retry_panel = build_unified_panel(
-                                    reasoning_rounds=state.reasoning_rounds,
+                                retry_panel = self._build_panel_payload(
+                                    session,
+                                    state,
                                     current_reasoning_text="",
-                                    tool_steps=all_tool_steps,
-                                    tool_elapsed_ms=session.tool_use.elapsed_ms,
-                                    show_reasoning=self._cfg.show_reasoning,
                                     expanded=self._cfg.panel_expanded,
-                                    panel_events=state.panel_events,
-                                    max_tool_steps=self._cfg.max_tool_steps,
-                                    max_reasoning_rounds=self._cfg.max_reasoning_rounds,
                                 )
                                 retry_actions.append(
                                     {
@@ -1189,24 +1295,9 @@ class UnifiedControllerMixin:
                                 state.answer_text
                                 and "answer" in session._creation_stages
                             ):
-                                optimized_content = (
-                                    escape_markdown_asterisks(
-                                        _downgrade_tables(
-                                            optimize_markdown_style(state.answer_text)
-                                        )
-                                    )
-                                    or " "
-                                )
-                                retry_actions.append(
-                                    {
-                                        "action": "partial_update_element",
-                                        "params": {
-                                            "element_id": ANSWER_ELEMENT_ID,
-                                            "partial_element": {
-                                                "content": optimized_content,
-                                            },
-                                        },
-                                    }
+                                # v1.8.9 (P2-8): 与主路径同款分块写入。
+                                retry_actions.extend(
+                                    self._answer_seal_actions(session, state)
                                 )
                         retry_actions.extend(
                             build_preservative_seal_actions(
@@ -1314,17 +1405,10 @@ class UnifiedControllerMixin:
 
             # ── Drain panel content ──
             if state.panel_dirty and "panel" in session._creation_stages:
-                all_tool_steps = session.tool_use.build_display_steps()
-                panel = build_unified_panel(
-                    reasoning_rounds=state.reasoning_rounds,
-                    current_reasoning_text=state.current_reasoning_text,
-                    tool_steps=all_tool_steps,
-                    tool_elapsed_ms=session.tool_use.elapsed_ms,
-                    show_reasoning=self._cfg.show_reasoning,
+                panel = self._build_panel_payload(
+                    session,
+                    state,
                     expanded=self._cfg.streaming_panel_expanded,
-                    panel_events=state.panel_events,
-                    max_tool_steps=self._cfg.max_tool_steps,
-                    max_reasoning_rounds=self._cfg.max_reasoning_rounds,
                 )
                 drain_actions: list[dict[str, Any]] = [
                     {
@@ -1386,6 +1470,8 @@ class UnifiedControllerMixin:
             if state.answer_dirty and "answer" in session._creation_stages:
                 # v1.7.0 (R2-01): incremental escape cache (was full-text escape).
                 content = state.escaped_answer_view() or " "
+                # v1.8.9 (P0-2 关联): 水位守卫（见 _do_unified_flush）。
+                _src_len = len(state.answer_text)
                 try:
                     session.sequence += 1
                     _logger.info(
@@ -1399,7 +1485,8 @@ class UnifiedControllerMixin:
                         content,
                         sequence=session.sequence,
                     )
-                    state.answer_dirty = False
+                    if len(state.answer_text) == _src_len:
+                        state.answer_dirty = False
                 except FeishuAPIError as e:
                     # v1.1.1: 统一 fallback — 300309 和 300313 都改用 batch_update（不带 tag）
                     # 之前 300309 直接 skip 答案丢失；300313 的 fallback 带 tag 报 300312

@@ -193,6 +193,57 @@ def _hls_mark_wrapped(func: Callable) -> Callable:
     return func
 
 
+# v1.8.9 (§5.2-C): hermes 回调签名漂移探测的告警去重（每个 label 一次）。
+_SIG_DRIFT_WARNED: set[str] = set()
+
+
+def warn_signature_drift(
+    func: Any,
+    expected: tuple[str, ...],
+    *,
+    label: str,
+) -> bool:
+    """校验 *func* 的前 len(expected) 个位置参数名与插件假设一致。
+
+    hermes 重排/改名回调参数不会让 wrapper 报错——只会静默错绑（例如把
+    preview 当 tool_name 渲染进卡片）。检测到漂移时打一条 warning（每个
+    label 只打一次）并返回 True；一致返回 False。无法内省（C 扩展/内置/
+    部分 partial）时静默跳过——与 gateway.py persist_user_timestamp 探测
+    同款兜底。expected 的基线取自 hermes 源码（run_turn_progress.py /
+    run_turn.py），升级 hermes 后漂移告警即提示需要重新对账。
+    """
+    import inspect
+
+    try:
+        params = list(inspect.signature(func).parameters.values())
+    except (TypeError, ValueError):
+        return False
+    # 带 *args 变长位置参的回调（含 Mock）按名校验无意义——位置绑定与名
+    # 无关，静默跳过（生产实测 0.21.4 的透传签名即属此类形态）。
+    if any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in params):
+        return False
+    positional = tuple(
+        p.name
+        for p in params
+        if p.kind
+        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    )
+    actual = positional[: len(expected)]
+    if actual != expected:
+        if label not in _SIG_DRIFT_WARNED:
+            _SIG_DRIFT_WARNED.add(label)
+            _logger.warning(
+                "HLS: callback signature drift — %s: 期望前 %d 个位置参数为 %s,"
+                "实际为 %s;卡片回调参数可能错绑,请核对 hermes 版本与插件假设",
+                label,
+                len(expected),
+                expected,
+                actual,
+            )
+        return True
+    return False
+
+
 # These imports must come AFTER shared state is defined to avoid circular
 
 from .adapter import (  # noqa: E402

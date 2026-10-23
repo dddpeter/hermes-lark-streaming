@@ -247,11 +247,19 @@ class Config:
     """插件配置, 惰性读取. 单例模式: reload() 才能清掉 controller 持有实例缓存."""
 
     _instance: "Config | None" = None
+    # v1.8.9 (P2-10): 双检锁。此前 __new__ 里 "判空 → 创建 → 设 _initialized"
+    # 完全无锁：两个线程同时首次取 Config 会各造一个实例，后写者覆盖
+    # _instance，先写者的 _raw/_lock 引用于是成了孤儿（表现为"配置偶发读不到、
+    # /aowen config reload 不生效"）——event-loop 线程 + worker 线程都会取。
+    _instance_lock = threading.Lock()
 
     def __new__(cls) -> "Config":
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
+            with cls._instance_lock:
+                if cls._instance is None:
+                    inst = super().__new__(cls)
+                    inst._initialized = False
+                    cls._instance = inst
         return cls._instance
 
     def __init__(self) -> None:
@@ -346,6 +354,17 @@ class Config:
     @property
     def answer_flush_interval_sec(self) -> float:
         return self.answer_flush_interval_ms / 1000.0
+
+    @property
+    def answer_chunk_chars(self) -> int:
+        """v1.8.9 (P2-8): 封卡时超长答案按 ## 标题切分的单元素目标字符数.
+
+        默认 20000（移动端超长单元素白屏的经验阈值），范围 4000~50000。
+        只影响封卡切分（controller/linear_mixin._answer_seal_actions）；
+        流式期单元素展示上限是 state 侧 _MAX_ANSWER_CHARS（50000）。"""
+        sec = self._plugin_sec()
+        val = _to_int(sec.get("answer_chunk_chars", 20000), default=20000)
+        return max(4000, min(50000, val))
 
     @property
     def show_reasoning(self) -> bool:

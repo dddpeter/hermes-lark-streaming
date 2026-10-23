@@ -590,7 +590,16 @@ def _wrap_feishu_adapter_edit(orig_edit: Callable) -> Callable:
                             except (ImportError, AttributeError):
                                 return None
             except Exception:
-                pass
+                # v1.8.9 (§3-#1): 这里是"本该渲染成卡片、却退化成纯文本"的
+                # 可观测事件（用户看到没排版的原文，且卡片侧后续更新全部落空）。
+                # 此前静默 pass，线上出现时日志里零痕迹。留 warning + traceback。
+                _logger.warning(
+                    "HLS: card edit failed, falling back to plain text "
+                    "chat=%s msg=%s",
+                    (chat_id or "?")[:12],
+                    (message_id or "?")[:12],
+                    exc_info=True,
+                )
 
         # ── Fallback: original edit_message ──
         _fallback_kwargs = {k: v for k, v in kwargs.items() if k != "metadata"}

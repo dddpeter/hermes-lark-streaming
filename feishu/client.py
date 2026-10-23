@@ -429,14 +429,22 @@ class FeishuClient:
 
     async def update_card(self, message_id: str, card: dict[str, Any]) -> None:
         """PATCH 更新已发送的卡片（IM PATCH 通道）."""
-        request = (
-            PatchMessageRequest.builder()
-            .message_id(message_id)
-            .request_body(PatchMessageRequestBody.builder().content(self._dumps(card)).build())
-            .build()
-        )
-        resp = await self._client.im.v1.message.apatch(request)
-        self._check(resp, "update_card")
+
+        async def _do():
+            request = (
+                PatchMessageRequest.builder()
+                .message_id(message_id)
+                .request_body(PatchMessageRequestBody.builder().content(self._dumps(card)).build())
+                .build()
+            )
+            resp = await self._client.im.v1.message.apatch(request)
+            self._check(resp, "update_card")
+
+        # v1.8.9 (P0-1): 此前 update_card 是全仓唯一没接 _retry_transient 的写
+        # 路径。retire_clarify / confirm 卡升级 / gateway 卡内容刷新全靠它，且
+        # 三者都没有二级兜底——一次 ReadTimeout 就会让用户看到"点了没反应"的
+        # 卡片并可能重复提交同一 clarify。与 reply_* / cardkit_* 对齐补上重试。
+        return await self._retry_transient("update_card", _do)
 
     async def cardkit_create(self, card: dict[str, Any]) -> str:
         """创建 CardKit 实体，返回 card_id."""

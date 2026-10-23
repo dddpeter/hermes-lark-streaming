@@ -732,14 +732,62 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             return
 
         session._was_aborted = True
+
+        # v1.8.9 (P0-2, 定级下调为 P2 卫生问题): 与 on_interrupted 对齐——
+        # 在飞 flush 未落地前不 mark_completed。旧序（先置 _completed 再
+        # complete）会抑制 controller 的补刷（flush/controller.py 的
+        # re-flush guard），drain 循环只能空转；最终内容虽由 seal 的无条件
+        # 全量重写兜住（不会丢字），但让增量路径自然收尾可消除 drain 与
+        # 在飞 flush 的并发窗口，也少一次全量重写。
+        if session.flush._flush_in_progress:
+            loop = self._get_loop()
+            if loop is not None:
+                self._fire_and_forget(
+                    self._wait_and_abort(session, source="on_aborted_wait"), loop
+                )
+                return
+            # No loop — fall through to immediate abort (best effort)
+
+        self._finalize_abort(session, source="on_aborted")
+
+    async def _wait_and_abort(self, session: CardSession, *, source: str) -> None:
+        """Wait for the in-flight flush, then finalize the abort.
+
+        与 on_interrupted 的同名逻辑同构：3s 超时兜底；等待期间自然完成
+        （COMPLETING/终态）则让位，避免二次封卡/状态非法回退。"""
+        try:
+            await asyncio.wait_for(session.flush.wait_for_flush(), timeout=3.0)
+        except Exception:
+            pass  # timeout or flush error — proceed with abort
+        if session.state == COMPLETING:
+            _logger.info(
+                "on_aborted: skip abort for msg=%s (session transitioned to "
+                "COMPLETING during flush wait)",
+                (session.message_id or "?")[:12],
+            )
+            return
+        if session.is_terminal_phase:
+            _logger.info(
+                "on_aborted: msg=%s already terminal (%s) after flush wait, "
+                "skipping abort",
+                (session.message_id or "?")[:12],
+                session.state,
+            )
+            return
+        self._finalize_abort(session, source=source)
+
+    def _finalize_abort(self, session: CardSession, *, source: str) -> None:
+        """Mark the session ABORTED and dispatch the linear completion path."""
         session.state = ABORTED
         # v1.7.0 (R3-01): record terminal metadata on the ABORTED path too —
         # previously only CREATION_FAILED/TERMINATED called enter_terminal,
         # so terminal_reason was always empty for the most common terminal
         # states (ABORTED/COMPLETED) and the epoch never bumped.
-        session.enter_terminal(reason=TerminalReason.ABORT, source="on_aborted")
+        session.enter_terminal(reason=TerminalReason.ABORT, source=source)
         session.flush.mark_completed()
-        _logger.info("on_aborted: msg=%s state=ABORTED", (message_id or "?")[:12])
+        _logger.info(
+            "on_aborted: msg=%s state=ABORTED", (session.message_id or "?")[:12]
+        )
 
         # v1.1.0: Record metrics
         try:

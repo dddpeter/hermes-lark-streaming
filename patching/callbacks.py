@@ -7,6 +7,7 @@ from . import (
     _logger,
     _msg_ctx,
     _thread_local_ctx,
+    warn_signature_drift,
 )
 
 
@@ -157,6 +158,14 @@ def _maybe_wrap_callbacks(agent) -> None:
     # ── TOOL: wrap tool_progress_callback ──
     if getattr(agent, "tool_progress_callback", None):
         _orig_tool = agent.tool_progress_callback
+        # v1.8.9 (§5.2-C): 签名基线来自 hermes run_turn_progress.py
+        # progress_callback(self, event_type, tool_name=None, preview=None,
+        # args=None, **kwargs)——顺序变化时 wrapper 不报错只会错绑。
+        warn_signature_drift(
+            _orig_tool,
+            ("event_type", "tool_name", "preview"),
+            label="tool_progress_callback",
+        )
 
         def _tool_wrapper(event_type, tool_name=None, preview=None, *args, **kwargs):
             _eid = _resolve_eid(eid)
@@ -203,6 +212,23 @@ def _maybe_wrap_callbacks(agent) -> None:
     ):
         _orig_tool_start = getattr(agent, "tool_start_callback", None)
         _orig_tool_complete = getattr(agent, "tool_complete_callback", None)
+        # v1.8.9 (§5.2-C): 基线来自 hermes run_turn_runner / run_turn_progress
+        # combined_tool_start_callback(call_id, tool_name, args) /
+        # combined_tool_complete_callback(call_id, tool_name, args, result)。
+        # 第 3 位是 display_args（wrapper 的 *args[0]）、第 4 位 result
+        # （*args[1]）——前缀一旦漂移，配对与预览全部错位。
+        if _orig_tool_start is not None:
+            warn_signature_drift(
+                _orig_tool_start,
+                ("call_id", "tool_name", "args"),
+                label="tool_start_callback",
+            )
+        if _orig_tool_complete is not None:
+            warn_signature_drift(
+                _orig_tool_complete,
+                ("call_id", "tool_name", "args"),
+                label="tool_complete_callback",
+            )
 
         def _stable_args_preview(tool_name: str, display_args) -> str:
             """稳定路径 started 预览：优先复用 hermes 自己的预览构造器
@@ -224,7 +250,15 @@ def _maybe_wrap_callbacks(agent) -> None:
                     or display_args
                 )
             except Exception:
-                pass
+                # v1.8.9 (§3-#5): 脱敏器不可用时**不能**退回原始 args——那会把
+                # 未脱敏的工具入参（可能含 token / 私钥 / 手机号）整包 dump 进
+                # 飞书卡片。退回只显示类型名，宁可少信息也不泄露。
+                _logger.warning(
+                    "HLS: redact_tool_args_for_display unavailable, "
+                    "suppressing tool args preview (tool=%s)",
+                    tool_name,
+                )
+                return f"<{type(display_args).__name__}>"
             try:
                 import json
 

@@ -9,7 +9,13 @@ from collections.abc import Awaitable, Callable
 
 _logger = logging.getLogger("hermes_lark_streaming")
 
-CARDKIT_MS = 0.080  # CardKit 流式 API 的刷新间隔（80ms：≥官方默认 print_frequency_ms 70ms，留余量给 API 往返）
+# v1.8.9 纠偏: 此值只是 FlushController 的构造默认值——建卡即被 config
+# flush_interval_ms（默认 200ms，clamp 70~2000）覆盖，纯答案快车道再切
+# answer_flush_interval_ms（默认 150ms）；建卡前 _card_message_ready=False
+# 根本不会 flush。它从未真正管辖过刷新率。想要更快的打字机效果调
+# flush_interval_ms 即可，无需动这里；只有想低于 70ms 才需要改 config 侧
+# 的 clamp（80ms 的历史出处：≥官方 print_frequency_ms 70ms，留 API 往返余量）。
+CARDKIT_MS = 0.080
 LONG_GAP_MS = 1.000  # 超过此间隔 → 认为是长时间空闲
 BATCH_AFTER_GAP_MS = 0.100  # 长时间空闲后等待这个时间再 flush
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -175,7 +176,12 @@ def _ensure_streaming_config() -> None:
 
         if changed:
             prepped = _prepare_config(raw)
-            with open(config_path, "w", encoding="utf-8") as f:
+            # v1.8.9 (P1-11): 原子写。此前直接用 open(config_path, "w") 重写用户的
+            # config.yaml——进程在 dump 中途被杀（OOM / 升级重启 / Ctrl-C）会留下
+            # 半截 YAML，整台 gateway 起不来且备份只在"首次注入前"存在一次。
+            # 改走同目录临时文件 + os.replace（同文件系统内原子）。
+            _tmp_path = config_path.with_suffix(config_path.suffix + ".hls-tmp")
+            with open(_tmp_path, "w", encoding="utf-8") as f:
                 yaml.dump(
                     prepped,
                     f,
@@ -183,6 +189,9 @@ def _ensure_streaming_config() -> None:
                     allow_unicode=True,
                     sort_keys=False,
                 )
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(_tmp_path, config_path)
     except Exception:
         _logger.exception(
             "Failed to ensure hermes_lark_streaming config in config.yaml"

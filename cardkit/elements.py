@@ -50,6 +50,7 @@ __all__ = [
     "build_panel_children",
     "_count_tag_objects",
     "_is_collapse_hint_child",
+    "_collapse_hint_digit_sum",
 ]
 
 _IMG_MD_PATTERN = re.compile(r"!\[([^\]]*)\]\((img_[^)\s]+)\)")
@@ -346,6 +347,17 @@ def _is_collapse_hint_child(child: Any) -> bool:
     ):
         return False
     return "已折叠" in content or "collapse" in content.lower()
+
+
+def _collapse_hint_digit_sum(content: str) -> int:
+    """Sum ALL digit groups in a collapse hint's content.
+
+    v1.8.9 (P2-4): 收敛两份折叠计数的解析实现。两种 hint 拼写都要算对：
+    seal 侧 "⚡ 还有 N 项已折叠"（一组数字）与面板构造器侧 "⚡ 还有 X 轮
+    早期推理、Y 步早期操作已折叠"（两组数字之和才是已折叠总数）。旧的
+    "项"锚定回扫只认前者。调用方先用 _is_collapse_hint_child 过滤。
+    """
+    return sum(int(_n) for _n in re.findall(r"\d+", content))
 
 
 def _truncate_reasoning(text: str) -> str:

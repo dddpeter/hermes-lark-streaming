@@ -9,7 +9,9 @@ from .elements import (
     CARD_WIDTH_MODE,
     UNIFIED_PANEL_ELEMENT_ID,
     _build_unified_panel_placeholder,
+    _collapse_hint_digit_sum,
     _count_tag_objects,
+    _is_collapse_hint_child,
     _loading_element,
     _loading_hint_element,
     _streaming_element,
@@ -61,30 +63,24 @@ def _enforce_card_element_limit(
     children: list[dict] = panel.get("elements", [])
 
     # ── Check if a collapse hint already exists ──
+    # v1.8.9 (P2-4): 与 elements.py/linear_mixin 收敛为同一实现——旧的
+    # "已折叠"子串判定不认识英文 hint，find("项") 回扫也不累加面板构造器
+    # 双数字格式（"X 轮早期推理、Y 步早期操作"）的计数，一旦命中即归零
+    # 重计。判定/跳过/计数/写入全部走共享助手，新 hint 补 i18n_content。
     hint_idx = None
     for i, child in enumerate(children):
-        if isinstance(child.get("content"), str) and "已折叠" in child["content"]:
+        if _is_collapse_hint_child(child):
             hint_idx = i
             break
-    _HINT_TEMPLATE = {
-        "tag": "markdown",
-        "content": "⚡ 还有 0 项已折叠",
-        "text_size": "notation",
-    }
-    _HINT_TAG_COUNT = _count_tag_objects(_HINT_TEMPLATE)  # typically 1
+    _HINT_TAG_COUNT = 1  # markdown hint element itself
     if hint_idx is None:
         total += _HINT_TAG_COUNT  # Reserve exact space for the new collapse hint
 
     # ── Trim oldest items from panel children until under threshold ──
     trimmed_count = 0
     while total > threshold and len(children) > 1:
-        # Skip the collapse hint (first child if it ends with "已折叠")
-        first_content = children[0].get("content", "")
-        remove_idx = (
-            1
-            if isinstance(first_content, str) and first_content.endswith("已折叠")
-            else 0
-        )
+        # Skip the collapse hint (first child when it is one)
+        remove_idx = 1 if _is_collapse_hint_child(children[0]) else 0
         removed = children.pop(remove_idx)
         total -= _count_tag_objects([removed])
         trimmed_count += 1
@@ -94,34 +90,31 @@ def _enforce_card_element_limit(
         # Re-find hint_idx (may have shifted due to removals)
         hint_idx = None
         for i, child in enumerate(children):
-            if isinstance(child.get("content"), str) and "已折叠" in child["content"]:
+            if _is_collapse_hint_child(child):
                 hint_idx = i
                 break
+        _en_hint, _zh_hint = _T["collapse_hint_count"]
         if hint_idx is not None:
-            # Parse existing trimmed count from hint, then add new trimmed count
-            # e.g. "⚡ 还有 5 项已折叠" → existing_count=5, trimmed_count=3 → "⚡ 还有 8 项已折叠"
-            old_hint = children[hint_idx]["content"]
-            # Extract the number before "项" — simple string parsing, no regex needed
-            existing_count = 0
-            _idx = old_hint.find("项")
-            if _idx > 0:
-                # Walk backwards skipping whitespace, then collect digits
-                _end = _idx
-                while _end > 0 and old_hint[_end - 1] == " ":
-                    _end -= 1
-                _start = _end
-                while _start > 0 and old_hint[_start - 1].isdigit():
-                    _start -= 1
-                if _start < _end:
-                    existing_count = int(old_hint[_start:_end])
-            total_trimmed = existing_count + trimmed_count
-            children[hint_idx]["content"] = f"⚡ 还有 {total_trimmed} 项已折叠"
+            old_hint = str(children[hint_idx].get("content", ""))
+            # Sums digit groups of BOTH hint spellings (see
+            # _collapse_hint_digit_sum) instead of the old zh-only
+            # "项"-anchored backward scan.
+            total_trimmed = _collapse_hint_digit_sum(old_hint) + trimmed_count
+            children[hint_idx]["content"] = _zh_hint.format(total_trimmed)
+            children[hint_idx]["i18n_content"] = _i18n(
+                _en_hint.format(total_trimmed),
+                _zh_hint.format(total_trimmed),
+            )
         else:
             children.insert(
                 0,
                 {
                     "tag": "markdown",
-                    "content": f"⚡ 还有 {trimmed_count} 项已折叠",
+                    "content": _zh_hint.format(trimmed_count),
+                    "i18n_content": _i18n(
+                        _en_hint.format(trimmed_count),
+                        _zh_hint.format(trimmed_count),
+                    ),
                     "text_size": "notation",
                 },
             )
