@@ -335,9 +335,7 @@ def _maybe_wrap_callbacks(agent) -> None:
                 try:
                     from .hooks import on_tool_updated
 
-                    is_error, suffix = _stable_detect_failure(
-                        tool_name or "", _result
-                    )
+                    is_error, suffix = _stable_detect_failure(tool_name or "", _result)
                     on_tool_updated(
                         message_id=_eid,
                         tool_name=tool_name or "",
@@ -346,9 +344,7 @@ def _maybe_wrap_callbacks(agent) -> None:
                         tool_call_id=str(call_id or ""),
                     )
                 except Exception:
-                    _logger.debug(
-                        "HLS: tool_complete_wrapper exception", exc_info=True
-                    )
+                    _logger.debug("HLS: tool_complete_wrapper exception", exc_info=True)
             if _orig_tool_complete is not None:
                 return _orig_tool_complete(call_id, tool_name, *args, **kwargs)
 

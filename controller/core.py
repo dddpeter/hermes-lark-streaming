@@ -88,7 +88,9 @@ class _ClientPool:
         _logger.info(
             "FeishuClient pool: home=%s app_id=%s base_url=%s",
             str(home)[:64] if home is not None else "(env fallback)",
-            creds["app_id"][:8] + "..." if len(creds["app_id"]) > 8 else creds["app_id"],
+            creds["app_id"][:8] + "..."
+            if len(creds["app_id"]) > 8
+            else creds["app_id"],
             self._base_url_for(creds),
         )
         return client
@@ -107,14 +109,14 @@ class _ClientPool:
             home = current_hermes_home()
             creds = feishu_creds_for_home(home)
         except Exception:
-            _logger.warning("HLS: turn home resolution failed, env fallback", exc_info=True)
+            _logger.warning(
+                "HLS: turn home resolution failed, env fallback", exc_info=True
+            )
             home = None
             creds = {}
         if not creds.get("app_id") or not creds.get("app_secret"):
             if home is not None:
-                _logger.warning(
-                    "HLS: no feishu creds for home %s — env fallback", home
-                )
+                _logger.warning("HLS: no feishu creds for home %s — env fallback", home)
             home = None
             creds = feishu_creds_for_home(None)
         cache_key = str(home) if home is not None else "__env__"

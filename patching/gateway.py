@@ -321,8 +321,7 @@ def _wrap_run_agent(orig: Callable) -> Callable:
         _sig = inspect.signature(orig)
         _run_agent_param_names = set(_sig.parameters)
         _has_var_keyword = any(
-            p.kind is inspect.Parameter.VAR_KEYWORD
-            for p in _sig.parameters.values()
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in _sig.parameters.values()
         )
     except (TypeError, ValueError):
         _run_agent_param_names = None  # C 扩展/内置 — 无法内省（同 674 行兜底）

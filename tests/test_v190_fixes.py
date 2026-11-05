@@ -96,9 +96,7 @@ class TestReactionSuppressionContract:
         )
         env = _card_env(monkeypatch, card_calls)
         with env:
-            result = asyncio.run(
-                wrapper(object(), _CARD_MSG_ID, "Typing")
-            )
+            result = asyncio.run(wrapper(object(), _CARD_MSG_ID, "Typing"))
         assert result is None  # on_processing_start 存句柄前先见 None → 不缓存
         assert calls == []  # 实际 reaction 被抑制
         assert card_calls and card_calls[0]["status_label"] == "Processing"
@@ -154,9 +152,7 @@ class TestReactionSuppressionContract:
         )
         env = _card_env(monkeypatch, card_calls)
         with env:
-            result = asyncio.run(
-                wrapper(object(), _CARD_MSG_ID, "rid-not-in-map")
-            )
+            result = asyncio.run(wrapper(object(), _CARD_MSG_ID, "rid-not-in-map"))
         assert result is False  # 透传 orig 真实返回值
         assert calls == [(_CARD_MSG_ID, "rid-not-in-map")]
         assert card_calls == []
@@ -177,9 +173,7 @@ class TestReactionSuppressionContract:
             result = asyncio.run(wrapper(object(), _CARD_MSG_ID, "Typing"))
         assert isinstance(result, _StubSendResult)
 
-    def test_private_add_passthrough_returns_reaction_id(
-        self, monkeypatch
-    ) -> None:
+    def test_private_add_passthrough_returns_reaction_id(self, monkeypatch) -> None:
         """非网关卡消息：私有语义透传 orig 返回值（reaction_id 原样）。"""
         card_calls: list[dict] = []
 

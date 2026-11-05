@@ -4,7 +4,7 @@
 # 本文件 patch 的是宿主 hermes-agent（gateway.* / hermes_lark_streaming 包名
 # 由 tests/conftest.py 运行时注册），import 均在 try/except ImportError 保护
 # 下；monkey-patch 动态属性赋值为架构必然。静态检查必然误报，文件级豁免
-#（运行时零影响）。
+# （运行时零影响）。
 
 from __future__ import annotations
 
@@ -313,7 +313,9 @@ def _apply_gateway_runner_patches(compat: Any | None = None) -> bool:
     if _gw_runner_patched:
         return True  # Already patched (e.g. immediate path succeeded)
 
-    GatewayRunner = (compat if compat is not None else HermesCompat()).gateway_runner_class
+    GatewayRunner = (
+        compat if compat is not None else HermesCompat()
+    ).gateway_runner_class
     if GatewayRunner is None:
         return False  # Not available yet
 
@@ -464,8 +466,7 @@ def _apply_resolved_targets(compat: Any, *, sys_modules_only: bool) -> dict[str,
     if not _module_patch_applied:
         # Hermes <v0.10 OR module not loaded yet: use direct AIAgent patch
         _logger.info(
-            "hermes-lark-streaming: using direct AIAgent patch "
-            "(conversation_loop %s)",
+            "hermes-lark-streaming: using direct AIAgent patch (conversation_loop %s)",
             "not loaded yet" if sys_modules_only else "incompatible",
         )
 
@@ -635,7 +636,9 @@ def apply_patches() -> None:
     _patch_status = {
         "version": __version__,
         "gateway_runner": "✓" if gw_patched else ("pending" if gw_delayed else "✗"),
-        "conversation_loop": "✓" if status["conversation_loop"] else "n/a (direct AIAgent)",
+        "conversation_loop": "✓"
+        if status["conversation_loop"]
+        else "n/a (direct AIAgent)",
         "aiagent_direct": "applied",
         "cron_scheduler": "✓" if status["cron_patched"] else "n/a",
         "background_task": "✓" if gw_patched else ("pending" if gw_delayed else "n/a"),
@@ -694,7 +697,7 @@ def _apply_feishu_adapter_patches(FeishuAdapter, *, is_repatch: bool = False) ->
             try:
                 # v1.9.0: hermes v0.22+ 已无公开 add_reaction，仅剩私有
                 # _add_reaction(message_id, emoji_type) → Optional[str] reaction_id
-                #（on_processing_start 的 ack 源）。私有契约下抑制分支返 None，
+                # （on_processing_start 的 ack 源）。私有契约下抑制分支返 None，
                 # 不得伪造 SendResult —— 否则它会被 on_processing_start 当
                 # reaction_id 缓存，后续按它删除必然失败且 FAILURE 徽标丢失。
                 FeishuAdapter._add_reaction = _wrap_feishu_adapter_add_reaction(

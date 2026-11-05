@@ -93,7 +93,9 @@ class HermesCompat:
             if cls is not None:
                 self.gateway_runner_class = cls
             else:
-                _logger.debug("HLS: gateway.run loaded but GatewayRunner not defined yet")
+                _logger.debug(
+                    "HLS: gateway.run loaded but GatewayRunner not defined yet"
+                )
 
         # AIAgent
         ra_mod = self._import("run_agent")

@@ -252,9 +252,7 @@ async def _dispatch_feishu_outbound(
                             # message_id)）—— 此前缺参 TypeError 被下方 except
                             # 静默吞掉，/stop 检测到的卡中止从未真正送达
                             # on_aborted（流式卡不封卡，等其它注入点兼底）。
-                            on_message_aborted(
-                                ctrl=_ctrl, message_id=_sess.message_id
-                            )
+                            on_message_aborted(ctrl=_ctrl, message_id=_sess.message_id)
                         except Exception:
                             _logger.debug("HLS: suppressed exception", exc_info=True)
                         # Suppress the "⚡ 已停止" gateway card —
@@ -606,8 +604,7 @@ def _wrap_feishu_adapter_edit(orig_edit: Callable) -> Callable:
                 # 可观测事件（用户看到没排版的原文，且卡片侧后续更新全部落空）。
                 # 此前静默 pass，线上出现时日志里零痕迹。留 warning + traceback。
                 _logger.warning(
-                    "HLS: card edit failed, falling back to plain text "
-                    "chat=%s msg=%s",
+                    "HLS: card edit failed, falling back to plain text chat=%s msg=%s",
                     (chat_id or "?")[:12],
                     (message_id or "?")[:12],
                     exc_info=True,
