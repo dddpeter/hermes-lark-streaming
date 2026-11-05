@@ -1,5 +1,9 @@
 """Hermes compatibility adapter — isolates all Hermes internal interface access."""
 
+# pyright: reportMissingImports=false, reportReturnType=false
+# 本模块职责就是隔离宿主接口访问：hermes_cli / agent.* 仅在装有 hermes 的
+# 运行环境可解析；状态字典含 str 版本字段，联合返回为设计使然。
+
 from __future__ import annotations
 
 import importlib

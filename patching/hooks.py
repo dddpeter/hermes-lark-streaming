@@ -1,5 +1,8 @@
 """These functions are called by patching/ sub-package when wrapping Hermes methods."""
 
+# pyright: reportMissingImports=false
+# hooks 签名以宿主实际调用契约为准，保持最小豁免。
+
 from __future__ import annotations
 
 import logging

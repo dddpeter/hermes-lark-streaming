@@ -1,3 +1,18 @@
+## v1.9.0 (2026-11-05)
+
+适配上游 hermes-agent v0.22.7（b200f5bc60，11-03；基线 v1.8.9 针对生产 0.21.x / 10-23 检出，上游一周 ~2246 提交）。逐点核对全部补丁目标：run_conversation + stream_callback、GatewayRunner 三方法（mixin 化后仍在，类属性 patch 有效）、FeishuAdapter.send/edit_message（新增 `finalize` kwarg，wrapper 带 `**kwargs` 天然兼容）、`_handle_card_action_event`、send_clarify（上移 BasePlatformAdapter，类属性遮蔽后仍生效）、retire_clarify_card（防御式 getattr 正好命中插件安装的方法）、cron._deliver_result、DeliveryRouter._deliver_to_platform —— 全部兼容。clarify 授权链路（上游 58892b93e8/de4fb05ec0 approval 卡 allowlist 重构）为语义等价重构且与 clarify 的 `_is_interactive_operator_authorized` 独立链路无关，不受影响；stream_max_lifetime（10-31 新特性）为 provider 层杀流、opt-in 配置，彻底失败走既有 abort/error 收尾链，无需透传（YAGNI）。
+
+| 类型 | 问题/功能 | 原因 | 修复/说明 |
+|------|-----------|------|-----------|
+| 🐛 Bug Fix (P1) | **reaction wrapper 返回值契约破坏（v0.22+ 形态）**：hermes v0.22+ 已删除公开 `add_reaction/delete_reaction`，安装逻辑 fallback wrap 私有 `_add_reaction`/`_remove_reaction`，但抑制分支无条件返 `SendResult` —— 私有 `_add_reaction` 的返回值被上游 `on_processing_start` 当 **reaction_id 句柄**存进 `_pending_processing_reactions`，之后按它删除必然失败且 FAILURE 徽标丢失；`_remove_reaction` 的 bool 返回被污染 | wrapper 按 0.20.x 公开 API（返 SendResult）的旧契约写死 | 两个 wrapper 增加 `send_result_semantics` 参数：公开名 wrap 返 SendResult（旧版不变），私有名 wrap 按上游契约返回（add 语义返 None="没发成" 不入句柄缓存；remove 语义返 True="已画卡视为已处理"让上游照常 pop）。注：私有形态第二参数是 reaction_id 非 emoji，永不命中 `_REACTION_STATUS_MAP`，实际永远透传（上游 ack 原生行为），抑制分支仅在公开 emoji 形态可达 (`patching/adapter.py`, `patching/__init__.py`) |
+| 🐛 Bug Fix (P2) | **/stop 检测路径的卡中止断链**：`_classify_gateway_message` 的 /stop 分支调 `on_message_aborted(message_id=...)` 缺契约要求的 `ctrl` 参数（hooks.py 签名 `(*, ctrl, message_id)`），TypeError 被下方 `except: debug` 静默吞掉——该路径检测到 ⚡ 已停止响应后从未真正送达 `on_aborted`，流式卡不封卡只能等其它注入点兜底 | 静态检查首次揪出（reportCallIssue），历史版本均如此 | 补传 `ctrl=_ctrl`（作用域内已有 `get_controller()` 结果），/stop → 卡中止链路真正闭环 (`patching/adapter.py`) |
+| 🐛 Bug Fix (P3) | clarify 三处 `ctrl._client` Optional 访问（send_clarify 发送 / retire 收尾 / confirm 确认）静态类型松散——运行时由 `_client_ok()` 守卫保证但分析器不可见 | 守卫不含 None 窄化 | 三处守卫补 `or ctrl._client is None`（零行为差异的纯类型收窄）；send_clarify 守卫同步补齐 (`patching/adapter.py`) |
+| 🧹 Chore | **plugin.yaml provides_hooks 清理**：声明的 11 个 hooks 中 10 个（on_answer_delta/on_message_aborted/on_feishu_normalize 等）从非任何版本的 VALID_HOOKS（0.21.6 / v0.22.7 双点考证均为 0 命中），`hermes plugin doctor` 会报 10 个 unknown hook 错误污染诊断输出 | 历史遗留的"意图性"声明——流式数据实际由 patching 层直接 wrap run_conversation 回调获得，与 hermes hook 机制无关，代码仅注册 `pre_gateway_dispatch` 一个 | 仅保留上游合法名 `pre_gateway_dispatch` + 注释考证依据 (`plugin.yaml`) |
+| 🧹 Chore | README 版本徽章滞后（1.8.8 vs plugin.yaml 1.8.9）；全仓静态类型噪音（宿主 hermes 模块 import / conftest 魔法包名 / mixin 动态组合在 pyright 下必然误报，量 350+ 条淹没真实信号） | 徽章漏更新；runtime-patch 架构固有 | 徽章随版本更新；受影响文件统一文件级 `# pyright: ...=false` 豁免（每处带架构原因注释，运行时零影响）+ 新增 `pyrightconfig.json`（供正常接入 pyright 的开发环境/CI 使用）；修复过程中顺带纠正 hooks.py 无关告警 1 处 (`README.md`, `README.zh-CN.md`, `patching/`, `controller/`, `tests/`, `pyrightconfig.json`) |
+| 🧪 Test | 新增 9 个回归测试 `test_v190_fixes.py` | 防回归 | 抑制契约 7（私有 add→None 防句柄缓存污染/公开 add→SendResult/无 gateway 包环境兜底 None/私有 remove 透传 reaction_id 与 orig 真实 bool/公开 delete→SendResult/非卡消息透传不画卡 ×2）+ v0.22 安装形态 2（仅私有 reaction 名的 FakeAdapter 安装后抑制分支契约正确/非卡透传原样） |
+
+**升级即收益**：无需任何配置。旧版 hermes（公开 add_reaction 存在）行为与 v1.8.9 完全一致；v0.22+ 自动启用私有名 fallback 且句柄缓存契约正确。全量 1109 用例绿（基线 1100 + 新增 9），ruff 全绿，pyright error 清零（架构必然噪音经文件级豁免后 0 残留）。
+
 ## v1.8.8 (2026-10-23)
 
 适配 hermes-agent 现役版本（GatewayRunner mixin 化重构后，2026-10 生产 2d4741da / 2026-10-23 工作区 7f17c468 双版本实测）+ 三项能力跟进。升级前用接口探针对两个检出逐一解析插件全部补丁目标（GatewayRunner 四方法 / run_conversation / cron._deliver_result / FeishuAdapter 六方法 / platform_registry / RelayAdapter / SendResult / hermes home override / clarify_gateway 协议），11/11 全部通过——v1.8.7 补丁面对新版依然完整可用，本版在其上做清理与能力跟进。

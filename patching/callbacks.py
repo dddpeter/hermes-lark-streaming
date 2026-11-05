@@ -1,5 +1,9 @@
 """Callback wrapping for AIAgent streaming callbacks."""
 
+# pyright: reportMissingImports=false, reportAttributeAccessIssue=false, reportCallIssue=false
+# 宿主 hermes-agent（agent.*）import 仅在装有 hermes 的运行环境可解析；
+# hooks 回调契约动态组合（ctrl 由 wrap 期闭包注入），静态检查必然误报。
+
 from __future__ import annotations
 
 from . import (

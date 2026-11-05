@@ -1,5 +1,9 @@
 """Unified panel linear mode — create, flush, and seal a single-card streaming session."""
 
+# pyright: reportAttributeAccessIssue=false, reportArgumentType=false, reportPossiblyUnboundVariable=false
+# 跨 mixin 协作属性（_fire_and_forget 等）由 core.py 运行时装配；分支守卫
+# 后使用的局部变量在控制流上可达，静态分析无法推得。
+
 from __future__ import annotations
 
 import asyncio

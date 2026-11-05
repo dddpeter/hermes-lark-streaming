@@ -16,6 +16,7 @@ worklog.md
 
 .conda/
 .venv/
+uv.lock
 .codebuddy/
 .vscode/
 .vscode-server/

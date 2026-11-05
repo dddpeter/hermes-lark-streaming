@@ -8,6 +8,11 @@ v1.1.1: 群聊为主，私聊覆盖核心流程。
 测试间自动加 2 秒延迟（真飞书模式）避免触发飞书 API 限流。
 """
 
+# pyright: reportMissingImports=false, reportAttributeAccessIssue=false
+# hermes_lark_streaming.* 由 tests/conftest.py 运行时注册包名（目录名带连字
+# 符 ≠ 包名），gateway.* 等宿主模块仅存在于 hermes 运行环境——静态解析必然
+# 误报，文件级豁免（运行时零影响）。
+
 from __future__ import annotations
 
 import asyncio

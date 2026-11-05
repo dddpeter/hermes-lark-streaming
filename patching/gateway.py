@@ -1,5 +1,9 @@
 """GatewayRunner method wrappers and cron delivery interception."""
 
+# pyright: reportMissingImports=false, reportAttributeAccessIssue=false, reportCallIssue=false, reportPossiblyUnboundVariable=false, reportArgumentType=false
+# 宿主 hermes-agent（gateway.*）import 仅在装有 hermes 的运行环境可解析；
+# wrapper 闭包内按运行时拓扑分支赋值（可能未绑定/动态属性均为架构必然）。
+
 from __future__ import annotations
 
 import functools

@@ -15,6 +15,11 @@ fire 一套 hooks → 每个副本各自的 controller（独立 _sessions 字典
 副本 2/3 跳过 wrap，全进程只有第一份 wrapper 生效 → 每条消息一张卡。
 """
 
+# pyright: reportMissingImports=false, reportAttributeAccessIssue=false
+# hermes_lark_streaming.* 由 tests/conftest.py 运行时注册包名（目录名带连字
+# 符 ≠ 包名），gateway.* 等宿主模块仅存在于 hermes 运行环境——静态解析必然
+# 误报，文件级豁免（运行时零影响）。
+
 from __future__ import annotations
 
 from typing import Any

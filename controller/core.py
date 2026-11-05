@@ -1,5 +1,8 @@
 """StreamCardController — 流式卡片主控制器（单例）."""
 
+# pyright: reportAttributeAccessIssue=false, reportIncompatibleMethodOverride=false
+# mixin 动态组合：路由客户端替换、子 mixin 覆写基类签名均为运行时拓扑设计。
+
 from __future__ import annotations
 
 import asyncio

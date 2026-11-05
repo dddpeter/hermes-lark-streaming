@@ -18,6 +18,11 @@ C. 稳定 call_id 工具配对 — 新版 hermes 触发携带稳定调用 ID 的
    防双记，旧版 hermes（无这两个属性）自动回退老路径。
 """
 
+# pyright: reportMissingImports=false, reportAttributeAccessIssue=false
+# hermes_lark_streaming.* 由 tests/conftest.py 运行时注册包名（目录名带连字
+# 符 ≠ 包名），gateway.* 等宿主模块仅存在于 hermes 运行环境——静态解析必然
+# 误报，文件级豁免（运行时零影响）。
+
 from __future__ import annotations
 
 import asyncio

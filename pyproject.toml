@@ -83,3 +83,8 @@ filterwarnings = [
     "ignore:pkg_resources is deprecated as an API:DeprecationWarning",
     "ignore:Deprecated call to:DeprecationWarning",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

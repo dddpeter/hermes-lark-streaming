@@ -1,5 +1,11 @@
 """FeishuAdapter interception layer — send, edit, reactions, and clarify cards."""
 
+# pyright: reportMissingImports=false, reportAttributeAccessIssue=false
+# 本文件 patch 的是宿主 hermes-agent（gateway.* / agent.* / tools.*）与
+# lark_oapi 可选符号，import 均在 try/except ImportError 保护下，仅在装有
+# hermes 的运行环境可解析；monkey-patch 的动态属性赋值亦为架构必然。
+# 两者静态检查必然误报，文件级豁免（运行时零影响）。
+
 from __future__ import annotations
 
 import asyncio
@@ -242,7 +248,13 @@ async def _dispatch_feishu_outbound(
                         try:
                             from .hooks import on_message_aborted
 
-                            on_message_aborted(message_id=_sess.message_id)
+                            # v1.9.0: 契约要求 ctrl（hooks.py 签名 (*, ctrl,
+                            # message_id)）—— 此前缺参 TypeError 被下方 except
+                            # 静默吞掉，/stop 检测到的卡中止从未真正送达
+                            # on_aborted（流式卡不封卡，等其它注入点兼底）。
+                            on_message_aborted(
+                                ctrl=_ctrl, message_id=_sess.message_id
+                            )
                         except Exception:
                             _logger.debug("HLS: suppressed exception", exc_info=True)
                         # Suppress the "⚡ 已停止" gateway card —
@@ -636,8 +648,24 @@ _REACTION_STATUS_MAP: dict[str, str] = {
 }
 
 
-def _wrap_feishu_adapter_add_reaction(orig_add_reaction: Callable) -> Callable:
-    """Intercept ``FeishuAdapter.add_reaction()`` — card status indicator."""
+def _wrap_feishu_adapter_add_reaction(
+    orig_add_reaction: Callable, *, send_result_semantics: bool = True
+) -> Callable:
+    """Intercept ``FeishuAdapter.add_reaction()`` — card status indicator.
+
+    ``send_result_semantics``：被 wrap 目标的返回值契约。公开 add_reaction
+    （旧版 hermes）返回 SendResult；私有 _add_reaction（v0.22+）返回
+    Optional[str] reaction_id —— on_processing_start 会把返回值存进
+    _pending_processing_reactions 待后续按 reaction_id 删除，抑制分支必须按
+    同一契约返回（私有语义返 None = "没发成"），否则 SendResult 对象会被当
+    reaction_id 缓存，之后 _remove_reaction 按它删必然失败且 FAILURE 徽标
+    丢失。
+
+    已知限制（v1.7.0 起沿用）：上游 reaction 打在用户消息上而非网关卡上
+    （on_processing_start(event) 用 event.message_id），卡片状态指示处于
+    dormant——本 wrapper 保持契约正确，待上游未来对卡片消息发 reaction 时
+    自然激活。
+    """
 
     async def _intercepted_add_reaction(self_feishu, message_id, emoji, **kwargs):
         # ── Check if this message_id is a gateway card ──
@@ -670,6 +698,8 @@ def _wrap_feishu_adapter_add_reaction(orig_add_reaction: Callable) -> Callable:
                             )
                             if updated:
                                 # Suppress the actual reaction — card shows status instead
+                                if not send_result_semantics:
+                                    return None
                                 try:
                                     from gateway.platforms.base import SendResult
 
@@ -685,8 +715,21 @@ def _wrap_feishu_adapter_add_reaction(orig_add_reaction: Callable) -> Callable:
     return _intercepted_add_reaction
 
 
-def _wrap_feishu_adapter_delete_reaction(orig_delete_reaction: Callable) -> Callable:
-    """Intercept ``FeishuAdapter.delete_reaction()`` — clear card status."""
+def _wrap_feishu_adapter_delete_reaction(
+    orig_delete_reaction: Callable, *, send_result_semantics: bool = True
+) -> Callable:
+    """Intercept ``FeishuAdapter.delete_reaction()`` — clear card status.
+
+    ``send_result_semantics``：被 wrap 目标的返回值契约。公开 delete_reaction
+    （旧版 hermes，第二参数为 emoji）返回 SendResult；私有 _remove_reaction
+    （v0.22+，第二参数为 reaction_id）返回 bool（True=已删）——上游
+    on_processing_complete 依它决定是否 pop _pending_processing_reactions
+    并继续 FAILURE 徽标，抑制分支私有语义返 True（状态已画卡，视为已处理）。
+
+    注：私有形态第二参数是 reaction_id 而非 emoji，永远无法命中
+    _REACTION_STATUS_MAP —— 即私有形态实际永远透传（上游 ack 原生行为），
+    抑制分支仅在公开 emoji 形态可达，私有分支为语义正确性防御。
+    """
 
     async def _intercepted_delete_reaction(self_feishu, message_id, emoji, **kwargs):
         # ── Check if this message_id is a gateway card ──
@@ -717,6 +760,8 @@ def _wrap_feishu_adapter_delete_reaction(orig_delete_reaction: Callable) -> Call
                                 category=card_info.get("category", "system"),
                             )
                             if updated:
+                                if not send_result_semantics:
+                                    return True
                                 try:
                                     from gateway.platforms.base import SendResult
 
@@ -800,7 +845,12 @@ def _wrap_feishu_adapter_send_clarify(orig_send_clarify: Callable) -> Callable:
             from ..controller import get_controller
 
             ctrl = get_controller()
-            if not ctrl or not ctrl.enabled or not ctrl._client_ok():
+            if (
+                not ctrl
+                or not ctrl.enabled
+                or not ctrl._client_ok()
+                or ctrl._client is None
+            ):
                 _logger.debug(
                     "clarify card: controller not available, falling back to text"
                 )
@@ -868,7 +918,6 @@ def _wrap_feishu_adapter_send_clarify(orig_send_clarify: Callable) -> Callable:
                 card_msg_id = await ctrl._client.reply_card(reply_to, card)
             else:
                 card_msg_id = await ctrl._client.send_card_to_chat(chat_id, card)
-
             _logger.info(
                 "clarify card: card sent successfully, clarify_id=%s card_msg_id=%s",
                 (clarify_id or "?")[:12],
@@ -984,7 +1033,7 @@ def _make_feishu_adapter_retire_clarify(orig_retire: Callable | None) -> Callabl
             from ..controller import get_controller
 
             ctrl = get_controller()
-            if not ctrl or not ctrl._client_ok():
+            if not ctrl or not ctrl._client_ok() or ctrl._client is None:
                 _logger.debug(
                     "clarify card: retire skipped, controller unavailable "
                     "clarify_id=%s",
@@ -1117,7 +1166,7 @@ async def _schedule_confirm_card(*, cid: str) -> None:
         from ..controller import get_controller
 
         ctrl = get_controller()
-        if not ctrl or not ctrl._client_ok():
+        if not ctrl or not ctrl._client_ok() or ctrl._client is None:
             _logger.warning(
                 "clarify card: cannot confirm, controller not available for clarify_id=%s",
                 (cid or "?")[:12],

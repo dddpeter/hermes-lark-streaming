@@ -1,5 +1,11 @@
 """Runtime monkey patching — replaces AST source injection at import time."""
 
+# pyright: reportMissingImports=false, reportAttributeAccessIssue=false
+# 本文件 patch 的是宿主 hermes-agent（gateway.* / hermes_lark_streaming 包名
+# 由 tests/conftest.py 运行时注册），import 均在 try/except ImportError 保护
+# 下；monkey-patch 动态属性赋值为架构必然。静态检查必然误报，文件级豁免
+#（运行时零影响）。
+
 from __future__ import annotations
 
 import contextvars
@@ -686,8 +692,13 @@ def _apply_feishu_adapter_patches(FeishuAdapter, *, is_repatch: bool = False) ->
             )
         except AttributeError:
             try:
+                # v1.9.0: hermes v0.22+ 已无公开 add_reaction，仅剩私有
+                # _add_reaction(message_id, emoji_type) → Optional[str] reaction_id
+                #（on_processing_start 的 ack 源）。私有契约下抑制分支返 None，
+                # 不得伪造 SendResult —— 否则它会被 on_processing_start 当
+                # reaction_id 缓存，后续按它删除必然失败且 FAILURE 徽标丢失。
                 FeishuAdapter._add_reaction = _wrap_feishu_adapter_add_reaction(
-                    FeishuAdapter._add_reaction
+                    FeishuAdapter._add_reaction, send_result_semantics=False
                 )
             except AttributeError:
                 _logger.debug(
@@ -699,8 +710,11 @@ def _apply_feishu_adapter_patches(FeishuAdapter, *, is_repatch: bool = False) ->
             )
         except AttributeError:
             try:
+                # v1.9.0: 私有 _remove_reaction(message_id, reaction_id) → bool；
+                # on_processing_complete 依返回值 pop 缓存并决定 FAILURE 徽标，
+                # 抑制分支返 True（状态已画卡，视为已处理）。
                 FeishuAdapter._remove_reaction = _wrap_feishu_adapter_delete_reaction(
-                    FeishuAdapter._remove_reaction
+                    FeishuAdapter._remove_reaction, send_result_semantics=False
                 )
             except AttributeError:
                 _logger.debug(
@@ -1054,7 +1068,8 @@ def _apply_direct_agent_patch(compat: Any | None = None) -> None:
             finally:
                 pass  # v1.3.0: inject_time guard removed
 
-        _patched_run_conversation._hls_direct_patched = True
+        # 哨兵防重复 wrap；函数对象动态属性为 monkey-patch 架构必然
+        _patched_run_conversation._hls_direct_patched = True  # type: ignore[reportFunctionMemberAccess]
         AIAgent.run_conversation = _patched_run_conversation
         _logger.info("hermes-lark-streaming: AIAgent.run_conversation patched directly")
     except AttributeError as e:

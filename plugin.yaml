@@ -1,17 +1,12 @@
 name: hermes-lark-streaming
-version: "1.8.9"
+version: "1.9.0"
 description: "Feishu/Lark CardKit v2.0 streaming cards for Hermes Agent — real-time AI response display with typing effect, tool panels, reasoning, and more"
 author: Aowen-Nowor
 kind: standalone
+# v1.9.0: 仅声明上游 VALID_HOOKS 合法名（hermes_cli/plugins.py）。其余 10 个
+# 历史名（on_answer_delta/on_message_aborted 等）从非任何版本的 VALID_HOOKS
+# （0.21.6/v0.22.7 双点考证均无），流式数据实际由 patching 层直接 wrap
+# run_conversation 回调获得，与 hermes hook 机制无关——虚声明只会让
+# `hermes plugin doctor` 报 unknown hook 噪音。
 provides_hooks:
   - pre_gateway_dispatch
-  - on_feishu_normalize
-  - on_message_started
-  - on_message_completed
-  - on_message_aborted
-  - on_message_interrupted
-  - on_answer_delta
-  - on_thinking_delta
-  - on_reasoning_delta
-  - on_tool_updated
-  - on_background_review_message

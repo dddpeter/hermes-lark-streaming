@@ -10,6 +10,11 @@ v1.8.5：_client 改为路由代理，卡片 API 调用时按当前 turn 所属 
 .env / env 兜底（config.reader.feishu_creds_for_home，60s TTL）。
 """
 
+# pyright: reportMissingImports=false, reportAttributeAccessIssue=false
+# hermes_lark_streaming.* 由 tests/conftest.py 运行时注册包名（目录名带连字
+# 符 ≠ 包名），gateway.* 等宿主模块仅存在于 hermes 运行环境——静态解析必然
+# 误报，文件级豁免（运行时零影响）。
+
 from __future__ import annotations
 
 import threading
