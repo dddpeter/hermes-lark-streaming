@@ -1463,6 +1463,33 @@ class UnifiedControllerMixin:
                 return await self._seal_reentry_finalize(session)
             return await self._do_linear_complete_locked(session)
 
+    def _finalize_terminal(
+        self,
+        session: CardSession,
+        *,
+        phase: Any,
+        reason: str,
+        source: str,
+        mark_flush: bool = True,
+    ) -> None:
+        """v1.10.0 评审落地: 终态收尾统一入口——收尾步骤收敛为单一实现。
+
+        state 置位 + enter_terminal（只记录 reason/source，不负责 state——
+        二者为全仓成对惯用法，此处打包防调用方漏步）+ flush 完成标记 +
+        会话重数据释放。watchdog 终态回收与封卡重入收尾共用；未来收尾
+        新增步骤（metrics/webhook 等）只改此处，两条路径不再隐性分歧。
+
+        mark_flush=False 用于封卡重入收尾——flush 状态由原封卡路径管理，
+        重入不重复 mark_completed。"""
+        session.state = phase
+        session.enter_terminal(reason=reason, source=source)
+        if mark_flush:
+            session.flush.mark_completed()
+        try:
+            self._release_session_data(session)
+        except Exception:
+            _logger.debug("HLS: release session data failed", exc_info=True)
+
     async def _seal_reentry_finalize(self, session: CardSession) -> bool:
         """v1.10.0: _do_linear_complete 重入收尾——封卡已执行过。
 
@@ -1500,21 +1527,27 @@ class UnifiedControllerMixin:
             # v1.10.0 评审#8: 尊重 abort 语义——拆卡后用户 /stop 的会话
             # 终态为 ABORTED（页脚"已停止"），而非 NORMAL/COMPLETED
             if session._was_aborted:
-                session.state = ABORTED
-                session.enter_terminal(
+                self._finalize_terminal(
+                    session,
+                    phase=ABORTED,
                     reason=TerminalReason.ABORT,
                     source="_do_linear_complete_reentry",
+                    mark_flush=False,
                 )
             else:
-                session.state = COMPLETED
-                session.enter_terminal(
+                self._finalize_terminal(
+                    session,
+                    phase=COMPLETED,
                     reason=TerminalReason.NORMAL,
                     source="_do_linear_complete_reentry",
+                    mark_flush=False,
                 )
-        try:
-            self._release_session_data(session)
-        except Exception:
-            _logger.debug("HLS: release session data failed", exc_info=True)
+        else:
+            # 已被并发路径终态化——仍需释放重数据（保持原无条件 release 语义）
+            try:
+                self._release_session_data(session)
+            except Exception:
+                _logger.debug("HLS: release session data failed", exc_info=True)
         return True
 
     async def _do_linear_complete_locked(self, session: CardSession) -> bool:

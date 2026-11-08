@@ -1551,18 +1551,12 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                             inactivity,
                             session._chain_depth,
                         )
-                        session.state = COMPLETED
-                        session.enter_terminal(
+                        self._finalize_terminal(
+                            session,
+                            phase=COMPLETED,
                             reason=TerminalReason.NORMAL,
                             source="watchdog_finalize_split",
                         )
-                        session.flush.mark_completed()
-                        try:
-                            self._release_session_data(session)
-                        except Exception:
-                            _logger.debug(
-                                "HLS: release session data failed", exc_info=True
-                            )
                 elif (
                     inactivity >= stuck_threshold and not session._seal_lock.locked()
                 ):
@@ -1577,18 +1571,12 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                             session.card_trace_id,
                             inactivity,
                         )
-                        session.state = CREATION_FAILED
-                        session.enter_terminal(
+                        self._finalize_terminal(
+                            session,
+                            phase=CREATION_FAILED,
                             reason=TerminalReason.CREATION_FAILED,
                             source="watchdog_creating_stuck",
                         )
-                        session.flush.mark_completed()
-                        try:
-                            self._release_session_data(session)
-                        except Exception:
-                            _logger.debug(
-                                "HLS: release session data failed", exc_info=True
-                            )
                     else:
                         _logger.warning(
                             "HLS: watchdog splitting stuck card msg=%s trace=%s "
