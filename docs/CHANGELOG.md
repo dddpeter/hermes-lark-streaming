@@ -1,3 +1,15 @@
+## v1.10.1 (2026-11-08)
+
+v1.10.0 当日生产反馈修复 — 「会话需要压缩时卡片不封口，继续聊天显示『上下文压缩已推迟 — 摘要仍在生成中。本回合将不压缩继续』」。hermes 侧考证（镜像源 gateway/run_turn_hygiene.py / run_turn_persistence.py / run_turn.py）：`turnhold_deferred` 通知（卫生压缩超 turn-hold 预算）发出后回合**继续不压缩运行**，通知本身不终止回合；真正的封卡断点在回合失败侧——超大 transcript 触发 provider 400/500 异常时，`_handle_message_with_agent` 的 `except Exception` 把异常转成**错误回复字符串**返回（`_hmwa_agent_error_reply`；上下文超限走 `_context_overflow_reply()` 确定性拒绝），COMPLETE hook 从未触发，而插件外层包装器对该字符串**只抑制文本不封卡**——流式卡永转圈、错误回复被吞、非终态会话泄漏。
+
+| 类型 | 问题/功能 | 原因 | 修复/说明 |
+|------|-----------|------|-----------|
+| 🐛 Bug Fix (P0) | **错误回复路径不封卡（用户报告主因）**：回合以异常结束时 hermes 在 `_handle_message_with_agent` 内部把异常转成错误回复字符串返回（上下文超限 400/500 → `_context_overflow_reply()`——正是"会话需要压缩"的失败形态），插件外层包装器见会话有卡即抑制回复——但 COMPLETE hook 从未跑过，卡片停在 STREAMING 永转圈 | 外层包装器的抑制检查只看"会话有卡"，不看会话是否已封 | 非终态流式卡 + 字符串结果 = 回合未正常完成 → 以错误字符串封卡（`on_message_completed(error_message=结果串[:2000], answer="")`，与 v1.8.1 内层 error-string 修复同构）；终态/COMPLETING 会话维持原抑制；`event_message_id` 为空（回合在 `_run_agent` 之前失败）回退 `message_id` 查会话 (`patching/gateway.py`) |
+| 🐛 Bug Fix (P1) | **压缩结局封成「已停止」+ guidance 替换真实答案**：`compression_exhausted`/`compression_deferred` 回合结果均 `partial=True` + `error=<英文 guidance>`，插件按 partial→中断封卡（页脚"已停止"，语义错误——不是用户停止）；且 guidance 作为 answer 走合并逻辑，与已流式内容不匹配时走 MISMATCH 分支**整段替换掉真实答案** | `partial` 被一刀切当中断；final_response 未区分"真答案"与"提示文本" | 三处 COMPLETE 调用点（主路径/子中断链//bg 后台任务）：压缩结局 → `aborted=False` + `answer=""`（已流式内容保留在卡上，guidance 只走错误面板）+ 错误面板加双语前缀（复用 `_T["compression_exhausted"]` "⚠ 上下文已满 / ⚠ Context Full"）；页脚 compression_exhausted 字段（默认字段集已含）自然显示。新助手 `_compression_turn_outcome` / `_compression_error_prefix` 可直测 (`patching/gateway.py`, `cardkit/i18n.py` 复用) |
+| 🧪 Test | 新增 11 个回归测试 `test_v1101_fixes.py` + 修正 1 个源码扫描测试的窗口启发式 | 防回归 | 外层错误回复补封卡 3（活卡封错误态/终态只抑制/eid 为空回退 message_id）+ 无卡放行 1 + 内层压缩结局 2（exhausted→错误态 aborted=False answer="" 双语前缀；interrupted→仍 aborted 回归守护）+ 助手直测 4 + 控制器封卡语义 1（错误面板上卡/页脚「上下文已满」/已流式答案不被 guidance 替换/终态 COMPLETED 非 ABORTED）；`test_child_complete_includes_result` 扫描窗口随 `_answer_child` 重构改为全分支扫描 |
+
+**升级即收益**：无需配置。压缩场景三态行为对齐——卫生压缩让位（turnhold_deferred）后回合继续、正常封卡；压缩耗尽/超时/异常回合封 ❌ 错误态（双语"⚠ 上下文已满"前缀 + hermes 原始提示），已流式内容保留；「已停止」只属于用户 /stop。全量 1161 用例（v1.10.0 的 1150 + 新增 11），1159 通过；2 个失败为 Windows 路径分隔符存量问题（历史存在，与本版无关）。
+
 ## v1.10.0 (2026-11-08)
 
 「任务已完成但流式卡永不封卡」的系统级修复。封卡链路（on_completed → COMPLETING → fire-and-forget 封卡协程 → _preservative_seal → close_streaming）的注入点修复已历经多轮（v1.8.1 error-string、v1.9.0 /stop 断链、Phase2 schema error 自愈……），本次排查确认仍剩四个互为放大的缺口，任何一条命中即复现；逐点打补丁追不完，故在控制器层新增**周期 seal watchdog（30s）统一兜底自愈**，并为「超长静默回合」提供**自动拆卡**（部分封卡 + 链式续写新卡）而非截断。

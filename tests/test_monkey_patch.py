@@ -245,21 +245,21 @@ class TestRecursiveInterruptContext:
 
         source = inspect.getsource(_wrap_run_agent)
         # In the _saved_parent_ctx branch, the child's COMPLETE should call
-        # on_message_completed with result data (not empty answer)
+        # on_message_completed with result data (not empty answer).
+        # v1.10.1: the answer is computed into `_answer_child`（压缩结局时置空）
+        # above the call — scan the whole child branch for
+        # `result.get("final_response")` instead of a ±10-line window.
         lines = source.split("\n")
         in_saved_parent_block = False
         found_child_final_response = False
-        for i, line in enumerate(lines):
+        for line in lines:
             if "_saved_parent_ctx is not None" in line:
                 in_saved_parent_block = True
-            if in_saved_parent_block and "on_message_completed" in line:
-                # Check nearby lines for final_response
-                nearby = "\n".join(lines[max(0, i - 2) : i + 10])
-                if "final_response" in nearby:
-                    found_child_final_response = True
-                    break
-            # Stop looking once we hit the parent ABORTED section
+                continue
             if in_saved_parent_block and "ABORTED" in line and "Step 2" in line:
+                break
+            if in_saved_parent_block and "final_response" in line:
+                found_child_final_response = True
                 break
         assert found_child_final_response, (
             "Child COMPLETE should use result.get('final_response') for B's answer"

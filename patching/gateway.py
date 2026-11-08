@@ -186,17 +186,62 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
                 _ctrl = get_controller()
                 if _ctrl and _ctrl.enabled:
                     _eid = ctx.get("event_message_id", "") if ctx else ""
-                    if _eid:
-                        _sess = _ctrl._sess_get(_eid)
-                        if _sess and _sess.card_msg_id:
+                    # v1.10.1: COMPLETE hook 未跑到时（回合在 _run_agent 之前/
+                    # 之外失败）event_message_id 可能为空——回退会话主键
+                    _lookup_id = _eid or (ctx.get("message_id") if ctx else "") or ""
+                    _sess = _ctrl._sess_get(_lookup_id) if _lookup_id else None
+                    if _sess and _sess.card_msg_id:
+                        if _sess.state in TERMINAL_PHASES or _sess.state == "completing":
                             _logger.info(
-                                "card session exists for msg=%s (state=%s), suppressing gateway reply",
+                                "card session exists for msg=%s (state=%s), "
+                                "suppressing gateway reply",
                                 mid[:12],
                                 _sess.state,
                             )
-                            ctx["card_sent"] = True
-                            _hls_cleanup_ctx()
-                            return None
+                        else:
+                            # v1.10.1: 非终态流式卡 + 字符串结果 = 回合未正常
+                            # 完成。hermes 把 _run_agent 的异常在
+                            # _handle_message_with_agent 内部转成错误回复字符串
+                            # （_hmwa_agent_error_reply——压缩失败/上下文超限
+                            # 400/500 走 _context_overflow_reply 等），此前只
+                            # 抑制文本不封卡：流式卡永转圈、错误回复被吞、会话
+                            # 非终态泄漏。以错误字符串封卡（与 v1.8.1 内层
+                            # error-string 修复同构），错误面板双语语义见
+                            # _compression_error_prefix（此处 result 可能是任
+                            # 意错误回复，原样上卡、限长）。
+                            _logger.warning(
+                                "HLS: unsealed card msg=%s (state=%s) with string "
+                                "agent result (%d chars) — hermes error-reply "
+                                "path; sealing card with error",
+                                mid[:12],
+                                _sess.state,
+                                len(str(result)),
+                            )
+                            try:
+                                from .hooks import on_message_completed
+
+                                _err_elapsed = (
+                                    time.monotonic()
+                                    - ctx.get("_msg_start_time", time.monotonic())
+                                    if ctx
+                                    else 0.0
+                                )
+                                on_message_completed(
+                                    message_id=_sess.message_id,
+                                    answer="",
+                                    duration=_err_elapsed,
+                                    error_message=str(result)[:2000],
+                                    aborted=False,
+                                )
+                            except Exception:
+                                _logger.warning(
+                                    "HLS: error-reply seal failed msg=%s",
+                                    mid[:12],
+                                    exc_info=True,
+                                )
+                        ctx["card_sent"] = True
+                        _hls_cleanup_ctx()
+                        return None
             except Exception:
                 _logger.warning("HLS: suppressed exception", exc_info=True)
         # None (the "Discarding stale agent result" path or the
@@ -293,6 +338,35 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
         return result
 
     return wrapper
+
+
+def _compression_turn_outcome(result: Any) -> bool:
+    """v1.10.1: hermes 压缩结局判定。
+
+    两种压缩失败的回合结果都带 ``partial=True`` + ``error=<英文 guidance>``：
+
+    * ``compression_exhausted``——压缩耗尽/超时，回合失败，hermes 网关侧
+      还会自动重置会话（_hmwa_compression_exhaustion_reset）；
+    * ``compression_deferred``——压缩锁被并发路径占用，回合立即让位，
+      final_response 是 "Context compression is temporarily paused…"。
+
+    这与用户 /stop 中断语义完全不同（任务根本没跑），不能按 partial→
+    中断封成「已停止」；final_response 是提示文本，也不能当答案合并
+    （会走 MISMATCH 分支整段替换掉已流式输出的真实答案）。"""
+    if not isinstance(result, dict):
+        return False
+    return bool(result.get("compression_exhausted") or result.get("compression_deferred"))
+
+
+def _compression_error_prefix(error_message: str) -> str:
+    """v1.10.1: 压缩结局的错误面板文案加双语前缀——hermes 的 guidance 是
+    英文硬编码，中文用户在卡片错误面板里需要一眼看出是上下文压缩问题。"""
+    if not error_message:
+        return error_message
+    from ..cardkit.i18n import _T
+
+    _en_cf, _zh_cf = _T["compression_exhausted"]
+    return f"{_zh_cf} / {_en_cf}\n{error_message}"
 
 
 def _wrap_run_agent(orig: Callable) -> Callable:
@@ -554,9 +628,25 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                         else "unknown"
                     )
 
+                    # v1.10.1: 压缩结局（exhausted/deferred）不是用户中断——
+                    # 封卡走错误态（❌ + 错误面板双语前缀），final_response
+                    # 是提示文本不能当答案合并（会替换已流式真实答案）
+                    _compression_child = _compression_turn_outcome(result)
+                    _answer_child = (
+                        "" if _compression_child else result.get("final_response", "")
+                    )
+                    _aborted_child = (
+                        False if _compression_child else is_interrupted_child
+                    )
+                    _error_child = (
+                        _compression_error_prefix(_error_msg_child)
+                        if _compression_child
+                        else _error_msg_child
+                    )
+
                     card_sent_child = on_message_completed(
                         message_id=ctx["message_id"],
-                        answer=result.get("final_response", ""),
+                        answer=_answer_child,
                         duration=_elapsed_child,
                         model=result.get("model", ""),
                         tokens={
@@ -574,8 +664,8 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                         compression_exhausted=result.get(
                             "compression_exhausted", False
                         ),
-                        aborted=is_interrupted_child,
-                        error_message=_error_msg_child,
+                        aborted=_aborted_child,
+                        error_message=_error_child,
                         reasoning_tokens=reasoning_tokens,
                         estimated_cost_usd=estimated_cost_usd,
                         cost_status=cost_status,
@@ -673,9 +763,19 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                     else "unknown"
                 )
 
+                # v1.10.1: 压缩结局同 child 路径——错误态封卡，不当答案合并
+                _compression = _compression_turn_outcome(result)
+                _answer = "" if _compression else result.get("final_response", "")
+                _aborted = False if _compression else is_interrupted
+                _error = (
+                    _compression_error_prefix(_error_msg)
+                    if _compression
+                    else _error_msg
+                )
+
                 card_sent = on_message_completed(
                     message_id=ctx["message_id"],
-                    answer=result.get("final_response", ""),
+                    answer=_answer,
                     duration=_elapsed,
                     model=result.get("model", ""),
                     tokens={
@@ -691,8 +791,8 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                     api_calls=result.get("api_calls", 0),
                     history_offset=result.get("history_offset", 0),
                     compression_exhausted=result.get("compression_exhausted", False),
-                    aborted=is_interrupted,
-                    error_message=_error_msg,
+                    aborted=_aborted,
+                    error_message=_error,
                     reasoning_tokens=reasoning_tokens,
                     estimated_cost_usd=estimated_cost_usd,
                     cost_status=cost_status,
@@ -903,9 +1003,23 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
                         else "unknown"
                     )
 
+                    # v1.10.1: /bg 任务同样能撞压缩结局——错误态封卡，
+                    # 提示文本不当答案合并
+                    _bg_result = result if isinstance(result, dict) else {}
+                    _compression_bg = _compression_turn_outcome(_bg_result)
+                    _bg_answer = (
+                        "" if _compression_bg else _bg_result.get("final_response", "")
+                    )
+                    _bg_error = _bg_result.get("error") or ""
+                    _bg_error = (
+                        _compression_error_prefix(_bg_error)
+                        if _compression_bg
+                        else _bg_error
+                    )
+
                     card_sent = on_message_completed(
                         message_id=task_id,
-                        answer=(result or {}).get("final_response", ""),
+                        answer=_bg_answer,
                         duration=_elapsed,
                         model=(result or {}).get("model", ""),
                         tokens={
@@ -924,7 +1038,7 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
                             "compression_exhausted", False
                         ),
                         aborted=False,
-                        error_message=(result or {}).get("error") or "",
+                        error_message=_bg_error,
                         reasoning_tokens=reasoning_tokens,
                         estimated_cost_usd=estimated_cost_usd,
                         cost_status=cost_status,
