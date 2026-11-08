@@ -396,6 +396,33 @@ class Config:
         return _to_int(self._plugin_sec().get("card_ttl_sec", 600), default=600)
 
     @property
+    def seal_watchdog_sec(self) -> int:
+        """v1.10.0: 封卡 watchdog 的 COMPLETING 重派阈值（秒）.
+
+        会话进入 COMPLETING 后若超过该时长仍未终态（正常封卡 <10s），watchdog
+        判定封卡派发丢失并重派 _do_linear_complete_with_fallback。0 = 禁用。
+        默认 120，范围 30~3600。"""
+        sec = self._plugin_sec()
+        val = _to_int(sec.get("seal_watchdog_sec", 120), default=120)
+        if val == 0:
+            return 0
+        return max(30, min(3600, val))
+
+    @property
+    def stuck_card_timeout_sec(self) -> int:
+        """v1.10.0: 流式卡无活动自动拆卡阈值（秒）.
+
+        STREAMING/CREATING 会话连续无任何流式事件超过该时长时，watchdog 对
+        当前卡做部分封卡（保留已流出内容）并武装续写——后续输出到达时自动
+        开新卡继续（链式拆卡，上限 20 张）；连续两个窗口无活动才终态回收。
+        0 = 禁用。默认 1800，非 0 时下限 600。"""
+        sec = self._plugin_sec()
+        val = _to_int(sec.get("stuck_card_timeout_sec", 1800), default=1800)
+        if val == 0:
+            return 0
+        return max(600, val)
+
+    @property
     def footer_fields(self) -> list[list[str]]:
         sec = self._plugin_sec()
         footer = sec.get("footer", {})

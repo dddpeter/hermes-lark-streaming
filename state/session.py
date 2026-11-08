@@ -36,17 +36,24 @@ class CardSession:
 
     __slots__ = (
         "_card_ready",
+        "_chain_depth",
         "_continuation_reactivation_count",
         "_create_epoch_snap",
         "_creation_stages",
         "_first_answer_time",
         "_first_flush_done",
         "_is_continuation",
+        "_last_event_at",
         "_loop",
         "_pending_flush",
+        "_seal_dispatched_at",
+        "_seal_done",
+        "_seal_lock",
+        "_split_sealed_answer_len",
         "_streaming_closed",
         "_streaming_closed_logged",
         "_was_aborted",
+        "_watchdog_split",
         "anchor_id",
         "card_created_at",
         "card_id",
@@ -63,6 +70,7 @@ class CardSession:
         "flush",
         "footer",
         "guard",
+        "home",
         "linear",
         "message_id",
         "sequence",
@@ -135,6 +143,35 @@ class CardSession:
         self._card_ready: asyncio.Event = asyncio.Event()
         self._is_continuation: bool = False
         self._continuation_reactivation_count: int = 0
+
+        # ── v1.10.0 seal watchdog / 拆卡自愈 ──────────────────────────
+        # 会话所属 profile home（创建时解析），watchdog 重派封卡时据此绑定
+        # multiplex 路由（协程自身 task context 内 set，不污染主 loop）。
+        try:
+            from ..config.reader import current_hermes_home
+
+            self.home: str = str(current_hermes_home())
+        except Exception:
+            self.home = ""
+        # 最后一次流式事件（answer/thinking/reasoning/tool）的 monotonic
+        # 时间戳；初始化为创建时刻，防止新卡瞬间触发 watchdog 判死。
+        self._last_event_at: float = time.monotonic()
+        # 封卡协程最近一次派发时间（_do_linear_complete_with_fallback 入口
+        # 统一打点）——watchdog COMPLETING 重派规则的判据。
+        self._seal_dispatched_at: float = 0.0
+        # 封卡已执行过（含 watchdog 拆卡的部分封卡与完整封卡，成功或失败
+        # 均算）——_do_linear_complete 防重入判据；重入时补发遗留答案后释放。
+        self._seal_done: bool = False
+        # 串行化封卡执行，防双重派发导致 footer/error 面板重复 add。
+        self._seal_lock = asyncio.Lock()
+        # watchdog 拆卡标记：卡片已被 watchdog 部分封卡（close_streaming），
+        # 会话保持非终态等待后续输出触发链式续写（_watchdog_split）。
+        self._watchdog_split: bool = False
+        # 拆卡封卡时已上卡的答案长度——重入兜底据此只补发拆卡之后新到的
+        # 尾段（unified_state 在拆卡时保留，on_completed 的合并会延长它）。
+        self._split_sealed_answer_len: int = 0
+        # watchdog 链式拆卡深度（0 = 非 watchdog 链），上限防失控循环。
+        self._chain_depth: int = 0
 
     def transition(self, to: str, source: str = "", reason: str = "") -> bool:
         """rejected.  Illegal transitions are logged but do not raise."""

@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/Project-Vibe%20Coding-ff69b4" alt="Vibe Coding">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-4caf50.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/python-3.11+-3776AB.svg" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/version-1.9.0-ff9800.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.10.0-ff9800.svg" alt="Version">
 </p>
 
 <p align="center">
@@ -132,6 +132,13 @@ hermes_lark_streaming:
   print_step: 4                    # Typewriter chars per render (default 4, range 1-10, Feishu 7.23+)
   flush_interval_ms: 200           # Plugin send interval in ms (70-2000, default 200)
   card_ttl_sec: 600               # Card alive detection timeout (seconds)
+  # ── Seal watchdog (v1.10.0) ──
+  seal_watchdog_sec: 120           # Session stuck in COMPLETING longer than this → watchdog re-dispatches the seal
+                                   # (30-3600, 0=disable; normal seals finish in <10s)
+  stuck_card_timeout_sec: 1800     # Streaming card silent for this long → auto-split:
+                                   # current card is partial-sealed (content kept), remaining output
+                                   # continues in a new chained card (up to 20); session is finalized
+                                   # only after two consecutive silent windows. >=600, 0=disable
   max_tool_steps: 20               # Max tool steps shown in panel (default 20, range 1–100)
   max_reasoning_rounds: 20         # Max reasoning rounds shown in panel (default 20, range 1–100)
 

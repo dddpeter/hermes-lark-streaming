@@ -32,7 +32,9 @@ from .mixin import (
     ABORTED,
     COMPLETED,
     COMPLETING,
+    CREATING,
     CREATION_FAILED,
+    STREAMING,
     TERMINATED,
     ControllerMixin,
 )
@@ -45,6 +47,11 @@ _INTERRUPT_MAP_MAX = 200
 # 正常生命周期由「目标封卡终态 → 其 _cleanup 的 stale-key 清理」收敛；上界
 # 只兜底极端场景（目标永不到达终态时避免 map 无限增长）。
 _CONTINUATION_MAP_MAX = 200
+# v1.10.0: watchdog 链式拆卡深度上限——每链接力需要一整个 stuck 静默窗口
+# （默认 1800s），天然限速；深度上限只为兜底失控循环（理论不可达）。
+_WATCHDOG_CHAIN_MAX = 20
+# watchdog 扫描周期（秒）
+_WATCHDOG_INTERVAL_SEC = 30.0
 
 from ..state.session import (  # noqa: E402, I001 — 置于常量块后系历史布局，顺序调整有循环导入风险
     CardSession,
@@ -168,6 +175,8 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         self._init_lock = asyncio.Lock()
         self._session_ttl = self._cfg.card_duration_sec
         self._loop: asyncio.AbstractEventLoop | None = None
+        # v1.10.0: seal watchdog 任务句柄（done 检查 = 幂等/重臂判据）
+        self._watchdog_task: asyncio.Task | None = None
         # v1.3.2 fix: hold strong references to fire-and-forget tasks to prevent
         # GC from collecting them mid-execution (asyncio only holds weak refs).
         self._pending_tasks: set[asyncio.Task] = set()
@@ -231,6 +240,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             # 卡片创建失败。
             self._pool.client_for_current_home()
             self._initialized = True
+            # v1.10.0: 封卡 watchdog（幂等启动）——COMPLETING 重派 / 超长静默
+            # 拆卡 / 终态收尾三规则，见 _seal_watchdog_pass。
+            self._start_seal_watchdog()
             _logger.info(
                 "FeishuClient routing pool initialized (multiplex per-profile bots)"
             )
@@ -315,7 +327,11 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         # the old early increment burned the single reactivation attempt even
         # when the new session was never created (id conflict / dispatch
         # failure), leaving the user without a continuation card forever.
-        seq = stale_session._continuation_reactivation_count + 1
+        # v1.10.0: seq 改按链深计算——delegate_task 单次续写场景 depth=0 →
+        # cont-1（与旧 count+1 语义一致）；watchdog 链式拆卡场景 cont-N 的
+        # depth=N → cont-(N+1)。旧 count+1 在链式场景会生成与自身相同的 id
+        # （cont-1 再续写仍得 cont-1）撞 sessions 冲突守卫，链必断。
+        seq = stale_session._chain_depth + 1
 
         # 生成新的 message_id（anchor_id 后缀 -cont-<seq>，便于日志关联）
         new_message_id = f"{anchor_id}-cont-{seq}"
@@ -335,6 +351,8 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         # anchor_id 设为原 anchor_id（reply 时仍回复到用户原始消息，保持线程上下文）
         new_session.anchor_id = anchor_id if anchor_id != new_message_id else None
         new_session._is_continuation = True
+        # v1.10.0: 链式拆卡深度继承 +1（watchdog 链上限判据）
+        new_session._chain_depth = stale_session._chain_depth + 1
         # v1.8.1 (P1): 继承原会话的话题隔离键——续写卡仍属于同一个话题，
         # 其它话题新消息的并发 seal 检查不应把它误封。
         new_session.thread_id = stale_session.thread_id
@@ -403,35 +421,59 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         return new_session
 
     def _maybe_reactivate_for_continuation(self, message_id: str) -> str | None:
-        """检查并按需为 message_id 触发会话续写重激活。"""
-        # 1. 已有映射 → 直接返回（幂等）
+        """检查并按需为 message_id 触发会话续写重激活。
+
+        v1.10.0 链式拆卡：watchdog 拆卡（_watchdog_split=True）的会话不再受
+        "最多重激活 1 次 / continuation 不再续"限制——超长任务可按静默窗口
+        反复"部分封卡 + 开新卡"，上限 _WATCHDOG_CHAIN_MAX 深度；已有映射的
+        目标若也被拆卡，则从目标续链并把全部映射键改指新卡（事件仍以原始
+        message_id 到达，on_completed 经 _pop_continuation_id 落到链尾）。"""
+        # 1. 已有映射 → 正常直接返回；但映射目标若被 watchdog 再次拆卡，
+        #    需要从目标续链（watchdog 链式拆卡）。
         existing = self._resolve_continuation_id(message_id)
         if existing is not None:
-            return existing
+            target = self._sess_get(existing)
+            if target is None or target.is_terminal_phase or not target._watchdog_split:
+                return existing
+            stale = target
+        else:
+            # 2. 查原 session 是否处于"流式已关闭但未终态"的可重激活状态
+            stale = self._sess_get(message_id)
+            if stale is None:
+                return None  # 没有原 session，无法重激活
+            # 已终态（COMPLETED/ABORTED/CREATION_FAILED/TERMINATED）的 session 不重激活
+            # ——on_completed 已封卡，后续 token 是迟到的 race condition，应丢弃而非开新卡
+            if stale.is_terminal_phase:
+                return None
+            # _streaming_closed=False 说明流式仍健康，正常路径处理
+            if not stale._streaming_closed:
+                return None
+            # 防递归：本 session 自己是 continuation session 时不再次重激活
+            # （watchdog 拆卡链除外——链式续写正是要连续重激活）
+            if stale._is_continuation and not stale._watchdog_split:
+                return None
+            # 限制最多重激活 1 次（极端情况：新 session 也遇到 300309 时不再重激活）
+            if not stale._watchdog_split and stale._continuation_reactivation_count >= 1:
+                return None
 
-        # 2. 查原 session 是否处于"流式已关闭但未终态"的可重激活状态
-        stale = self._sess_get(message_id)
-        if stale is None:
-            return None  # 没有原 session，无法重激活
-        # 已终态（COMPLETED/ABORTED/CREATION_FAILED/TERMINATED）的 session 不重激活
-        # ——on_completed 已封卡，后续 token 是迟到的 race condition，应丢弃而非开新卡
-        if stale.is_terminal_phase:
-            return None
-        # _streaming_closed=False 说明流式仍健康，正常路径处理
-        if not stale._streaming_closed:
-            return None
-        # 防递归：本 session 自己是 continuation session 时不再次重激活
-        if stale._is_continuation:
-            return None
-        # 限制最多重激活 1 次（极端情况：新 session 也遇到 300309 时不再重激活）
-        if stale._continuation_reactivation_count >= 1:
+        # 链深上限——两个分支（直达 / 映射续链）汇合后统一检查。映射路径
+        # 是主路径（事件以原始 message_id 到达），上限若只查直达分支则形同
+        # 虚设（v1.10.0 评审发现）。
+        if stale._watchdog_split and stale._chain_depth >= _WATCHDOG_CHAIN_MAX:
             return None
 
         # 3. 触发重激活
         new_session = self._reactivate_session_for_continuation(stale)
         if new_session is None:
             return None
-        self._register_continuation(message_id, new_session.message_id)
+        self._register_continuation(stale.message_id, new_session.message_id)
+        # watchdog 链：把所有指向 stale 的映射键改指新会话——事件仍以原始
+        # message_id 到达，on_completed 的 _pop_continuation_id 须拿到链尾。
+        if stale._watchdog_split:
+            with self._continuation_map_lock:
+                for key, val in self._continuation_map.items():
+                    if val == stale.message_id:
+                        self._continuation_map[key] = new_session.message_id
         return new_session.message_id
 
     def _fire_and_forget(
@@ -455,6 +497,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                 task = loop.create_task(coro)
                 # Hold strong reference until task completes
                 self._pending_tasks.add(task)
+                # v1.10.0: create_task 路径的异常此前零日志（done 回调只做
+                # discard）——封卡任务静默死亡 = 卡片永不封卡的第一大根因。
+                # 与 run_coroutine_threadsafe 路径的 _on_bg_task_done 对齐。
+                task.add_done_callback(self._log_task_exception)
                 task.add_done_callback(self._pending_tasks.discard)
                 return
             except RuntimeError:
@@ -487,6 +533,8 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             return
 
         self._prune_stale_sessions()
+        # v1.10.0: watchdog 惰性重臂（loop 重建后补启，见 _start_seal_watchdog）
+        self._start_seal_watchdog()
 
         # v1.3.6 fix: 用 seen set 跟踪已处理的 session 对象，防止同一 session
         seen_sessions: set[int] = set()
@@ -585,10 +633,23 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         """思考内容增量."""
         if not self.enabled:
             return
+        # v1.10.0: 拆卡/续写路由——与 on_answer 同构
+        _think_new_id = self._maybe_reactivate_for_continuation(message_id)
+        if _think_new_id is not None:
+            # thinking 逐 delta 到达且续写链存续期每条都命中映射——DEBUG
+            # （与 on_reasoning 同级，避免 INFO 刷屏）
+            _logger.debug(
+                "HLS: on_thinking routed to continuation old_msg=%s new_msg=%s",
+                (message_id or "?")[:12],
+                _think_new_id[:12],
+            )
+            message_id = _think_new_id
         session = self._get_active_session(message_id)
         if session is None or session.guard.should_skip("on_thinking"):
             return
 
+        # v1.10.0: watchdog 判活时间戳（无活动超阈值 → 拆卡/收卡）
+        session._last_event_at = time.monotonic()
         self._linear_on_thinking(session, text)
 
     def on_reasoning(self, *, message_id: str, text: str) -> None:
@@ -597,9 +658,21 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             return
         if not self._cfg.show_reasoning:
             return
+        # v1.10.0: 拆卡/续写路由——与 on_answer 同构
+        _reason_new_id = self._maybe_reactivate_for_continuation(message_id)
+        if _reason_new_id is not None:
+            _logger.debug(
+                "HLS: on_reasoning routed to continuation old_msg=%s new_msg=%s",
+                (message_id or "?")[:12],
+                _reason_new_id[:12],
+            )
+            message_id = _reason_new_id
         session = self._get_active_session(message_id)
         if session is None or session.guard.should_skip("on_reasoning"):
             return
+
+        # v1.10.0: watchdog 判活时间戳
+        session._last_event_at = time.monotonic()
 
         # Epoch guard: if session entered terminal phase between lookup and
         # here (concurrent message race), skip to prevent stale writes.
@@ -636,9 +709,23 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         （tool_start_callback / tool_complete_callback），空串 = 旧版按名字配对。"""
         if not self.enabled:
             return
+        # v1.10.0: 拆卡/续写路由——与 on_answer 同构。watchdog 拆卡或
+        # delegate_task 续写后，工具事件按映射落到链尾新卡（此前续写卡的
+        # 工具步全部丢失，面板停在续写前状态）。
+        _tool_new_id = self._maybe_reactivate_for_continuation(message_id)
+        if _tool_new_id is not None:
+            _logger.info(
+                "HLS: on_tool_update routed to continuation old_msg=%s new_msg=%s",
+                (message_id or "?")[:12],
+                _tool_new_id[:12],
+            )
+            message_id = _tool_new_id
         session = self._get_active_session(message_id)
         if session is None or session.guard.should_skip("on_tool_update"):
             return
+
+        # v1.10.0: watchdog 判活时间戳
+        session._last_event_at = time.monotonic()
 
         # Epoch guard: prevent stale writes from previous message's callbacks
         epoch = session.create_epoch
@@ -690,6 +777,9 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         session = self._get_active_session(message_id)
         if session is None or session.guard.should_skip("on_answer"):
             return
+
+        # v1.10.0: watchdog 判活时间戳
+        session._last_event_at = time.monotonic()
 
         # Epoch guard: prevent stale writes from previous message's callbacks
         epoch = session.create_epoch
@@ -1234,7 +1324,13 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             )
 
     async def _do_linear_complete_with_fallback(self, session: CardSession) -> None:
-        """线性模式完成，卡片不可用时回退为文本回复."""
+        """线性模式完成，卡片不可用时回退为文本回复.
+
+        v1.10.0: 入口统一打点 _seal_dispatched_at（watchdog COMPLETING 重派
+        判据——所有派发来源：on_completed / on_aborted / 续写重激活 /
+        watchdog 重派，均经此处）；文本兜底自身不再允许炸掉封卡协程
+        （此前 except 块内的二次抛出会静默杀死 fire-and-forget 任务）。"""
+        session._seal_dispatched_at = time.monotonic()
         # Snapshot fallback text before _do_linear_complete potentially releases it
         _fallback_text = ""
         if session.error_message:
@@ -1247,14 +1343,30 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         try:
             result = await self._do_linear_complete(session)
             if not result:
-                await self._send_text_fallback(session, fallback_text=_fallback_text)
+                try:
+                    await self._send_text_fallback(
+                        session, fallback_text=_fallback_text
+                    )
+                except Exception:
+                    _logger.warning(
+                        "text fallback failed after complete msg=%s",
+                        (session.message_id or "?")[:12],
+                        exc_info=True,
+                    )
         except Exception:
             _logger.warning(
                 "linear complete with fallback failed: msg=%s",
                 (session.message_id or "?")[:12],
                 exc_info=True,
             )
-            await self._send_text_fallback(session, fallback_text=_fallback_text)
+            try:
+                await self._send_text_fallback(session, fallback_text=_fallback_text)
+            except Exception:
+                _logger.warning(
+                    "text fallback failed after complete error msg=%s",
+                    (session.message_id or "?")[:12],
+                    exc_info=True,
+                )
 
     async def _send_text_fallback(
         self, session: CardSession, *, fallback_text: str = ""
@@ -1339,6 +1451,231 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                     "HLS: active session over TTL but not terminal, skip cleanup: msg=%s",
                     (mid or "?")[:20],
                 )
+
+    # ── v1.10.0: seal watchdog — 封卡自愈 ─────────────────────────────
+    # 「任务完成但卡片永不封卡」的兜底自愈。此 bug 类的注入点修复已历经
+    # 多轮（v1.8.1 error-string、v1.9.0 /stop 断链、Phase2 schema error、
+    # fire-and-forget 静默死亡……），watchdog 在控制器层统一兜住所有残余
+    # 路径，规则分三类：
+    #   规则 1 COMPLETING 重派 —— 封卡派发丢失/协程死亡（此前所有兜底均
+    #          显式跳过 COMPLETING），超过 seal_watchdog_sec 重派封卡。
+    #   规则 2 超长静默拆卡 —— STREAMING/CREATING 连续 stuck_card_timeout_sec
+    #          无任何流式事件：对当前卡部分封卡（内容保留 + "任务仍在执行"
+    #          指示），会话保持非终态武装续写；后续输出经
+    #          _maybe_reactivate_for_continuation 开新卡继续（链式拆卡）。
+    #   规则 3 拆卡终态收尾 —— 已拆卡会话连续两个窗口仍无活动（回合确定
+    #          已死，续写永远不会来）→ 无 API 终态化回收。
+
+    def _start_seal_watchdog(self) -> None:
+        """幂等启动 watchdog 周期任务。
+
+        _ensure_init 首启；on_message_started 惰性重臂（评审#9）——进程内
+        loop 重建后旧任务随 loop 死亡且 _initialized 仍 True，按 done 状态
+        补启。"""
+        prev = self._watchdog_task
+        if prev is not None and not prev.done():
+            return
+        try:
+            task = asyncio.get_running_loop().create_task(self._seal_watchdog())
+        except RuntimeError:
+            return  # 无运行中 loop（调用点均在 loop 上下文，防御性兜底）
+        self._watchdog_task = task
+        self._pending_tasks.add(task)
+
+        def _watchdog_done(t: asyncio.Task) -> None:
+            # watchdog 随 loop 关停被取消是正常退出路径（评审#9）——
+            # 不打 CANCELLED 假警报；异常仍记录。
+            if not t.cancelled():
+                self._log_task_exception(t)
+
+        task.add_done_callback(_watchdog_done)
+        task.add_done_callback(self._pending_tasks.discard)
+        _logger.info(
+            "HLS: seal watchdog started (interval=%.0fs)", _WATCHDOG_INTERVAL_SEC
+        )
+
+    async def _seal_watchdog(self) -> None:
+        while True:
+            await asyncio.sleep(_WATCHDOG_INTERVAL_SEC)
+            try:
+                self._seal_watchdog_pass()
+            except Exception:
+                # 单轮失败绝不终止循环（自愈器自身必须比被兜底的路径更皮实）
+                _logger.warning("HLS: seal watchdog pass failed", exc_info=True)
+
+    def _seal_watchdog_pass(self) -> None:
+        now = time.monotonic()
+        seal_threshold = self._cfg.seal_watchdog_sec
+        stuck_threshold = self._cfg.stuck_card_timeout_sec
+        if seal_threshold <= 0 and stuck_threshold <= 0:
+            return  # 双规则均禁用
+        for msg_id, session in self._sess_items_snapshot():
+            try:
+                if session.is_terminal_phase:
+                    continue
+                state = session.state
+                # ── 规则 1：COMPLETING 重派（封卡派发丢失自愈）──
+                if state == COMPLETING:
+                    if (
+                        seal_threshold > 0
+                        and session._seal_dispatched_at > 0
+                        and now - session._seal_dispatched_at >= seal_threshold
+                        and not session._seal_lock.locked()
+                    ):
+                        _logger.warning(
+                            "HLS: watchdog re-sealing stuck COMPLETING session "
+                            "msg=%s trace=%s age=%.0fs",
+                            (msg_id or "?")[:12],
+                            session.card_trace_id,
+                            now - session._seal_dispatched_at,
+                        )
+                        self._dispatch_watchdog_seal(session)
+                    continue
+                # ── 规则 2/3：STREAMING/CREATING ──
+                if state not in (STREAMING, CREATING):
+                    continue
+                inactivity = now - session._last_event_at
+                if stuck_threshold <= 0:
+                    continue
+                if session._watchdog_split:
+                    # ── 规则 3：已拆卡仍无活动 → 两个窗口后终态收尾 ──
+                    if (
+                        inactivity >= stuck_threshold * 2
+                        and not session._seal_lock.locked()
+                    ):
+                        _logger.warning(
+                            "HLS: watchdog finalizing split session msg=%s trace=%s "
+                            "inactivity=%.0fs chain_depth=%d",
+                            (msg_id or "?")[:12],
+                            session.card_trace_id,
+                            inactivity,
+                            session._chain_depth,
+                        )
+                        session.state = COMPLETED
+                        session.enter_terminal(
+                            reason=TerminalReason.NORMAL,
+                            source="watchdog_finalize_split",
+                        )
+                        session.flush.mark_completed()
+                        try:
+                            self._release_session_data(session)
+                        except Exception:
+                            _logger.debug(
+                                "HLS: release session data failed", exc_info=True
+                            )
+                elif (
+                    inactivity >= stuck_threshold and not session._seal_lock.locked()
+                ):
+                    # ── 规则 2：超长静默拆卡 ──
+                    if not session.card_id:
+                        # 卡从未建成（CREATING 卡死）——无从拆卡，直接终态回收；
+                        # 迟到的 on_completed 会走 CREATION_FAILED → 文本兜底。
+                        _logger.warning(
+                            "HLS: watchdog terminalizing cardless stuck session "
+                            "msg=%s trace=%s inactivity=%.0fs",
+                            (msg_id or "?")[:12],
+                            session.card_trace_id,
+                            inactivity,
+                        )
+                        session.state = CREATION_FAILED
+                        session.enter_terminal(
+                            reason=TerminalReason.CREATION_FAILED,
+                            source="watchdog_creating_stuck",
+                        )
+                        session.flush.mark_completed()
+                        try:
+                            self._release_session_data(session)
+                        except Exception:
+                            _logger.debug(
+                                "HLS: release session data failed", exc_info=True
+                            )
+                    else:
+                        _logger.warning(
+                            "HLS: watchdog splitting stuck card msg=%s trace=%s "
+                            "inactivity=%.0fs state=%s",
+                            (msg_id or "?")[:12],
+                            session.card_trace_id,
+                            inactivity,
+                            state,
+                        )
+                        self._dispatch_watchdog_split(session)
+            except Exception:
+                _logger.warning(
+                    "HLS: watchdog pass item failed msg=%s",
+                    (msg_id or "?")[:12],
+                    exc_info=True,
+                )
+
+    def _dispatch_watchdog_seal(self, session: CardSession) -> None:
+        """重派完整封卡（规则 1）。绑定会话所属 profile home（multiplex）。"""
+        loop = session._loop
+        if loop is None or loop.is_closed():
+            _logger.error(
+                "HLS: watchdog seal aborted — session loop closed msg=%s",
+                (session.message_id or "?")[:12],
+            )
+            return
+        self._fire_and_forget(self._watchdog_seal_with_home(session), loop)
+
+    def _dispatch_watchdog_split(self, session: CardSession) -> None:
+        """派发拆卡部分封卡（规则 2）。绑定会话所属 profile home（multiplex）。"""
+        loop = session._loop
+        if loop is None or loop.is_closed():
+            _logger.error(
+                "HLS: watchdog split aborted — session loop closed msg=%s",
+                (session.message_id or "?")[:12],
+            )
+            return
+        self._fire_and_forget(self._watchdog_split_with_home(session), loop)
+
+    async def _watchdog_seal_with_home(self, session: CardSession) -> None:
+        """watchdog 重派封卡——协程自身 task context 内绑定会话 home，
+        multiplex 部署下路由到正确的 bot（不污染主 loop / 其它任务）。"""
+        token = None
+        try:
+            if session.home:
+                from ..config.reader import set_turn_home
+
+                token = set_turn_home(session.home)
+            await self._do_linear_complete_with_fallback(session)
+        finally:
+            if token is not None:
+                from ..config.reader import reset_turn_home
+
+                reset_turn_home(token)
+
+    async def _watchdog_split_with_home(self, session: CardSession) -> None:
+        """watchdog 拆卡部分封卡——home 绑定语义同 _watchdog_seal_with_home。"""
+        token = None
+        try:
+            if session.home:
+                from ..config.reader import set_turn_home
+
+                token = set_turn_home(session.home)
+            await self._watchdog_split_seal(session)
+        finally:
+            if token is not None:
+                from ..config.reader import reset_turn_home
+
+                reset_turn_home(token)
+
+    @staticmethod
+    def _log_task_exception(task: asyncio.Task) -> None:
+        """v1.10.0: 记录 fire-and-forget 任务（create_task 路径）的异常/取消。
+
+        此前该路径 done 回调只做 discard，封卡协程一死会话即永卡 COMPLETING
+        且零日志——watchdog 虽能自愈重派，根因仍须在日志里可见。"""
+        if task.cancelled():
+            _logger.warning(
+                "HLS: background task CANCELLED: %r",
+                task.get_coro(),
+            )
+            return
+        exc = task.exception()
+        if exc is not None:
+            _logger.warning(
+                "HLS: background task failed: %r", task.get_coro(), exc_info=exc
+            )
 
     @staticmethod
     def _on_bg_task_done(fut: ConcurrentFuture) -> None:

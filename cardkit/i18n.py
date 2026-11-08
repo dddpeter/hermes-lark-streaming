@@ -31,6 +31,17 @@ _T: dict[str, tuple[str, str]] = {
     "cache": ("Cache {}", "缓存 {}"),
     "bg_review_panel": ("Review", "审查"),
     "partial_continues": ("Continues in next message", "内容未完，继续在下一条消息"),
+    # v1.10.0: watchdog 拆卡——超长静默回合的卡被自动收起、后续输出开新卡继续
+    "watchdog_split_note": (
+        "⏱ Task still running — card auto-sealed by inactivity watchdog; "
+        "further output continues in a new card",
+        "⏱ 任务仍在执行：超时保护已自动收起本卡，后续输出将在新卡继续",
+    ),
+    # v1.10.0: watchdog 终态收尾——两个窗口都无活动，判定回合已死
+    "watchdog_timeout": (
+        "⏱ No completion callback received within timeout — card finalized by watchdog",
+        "⏱ 超时未收到完成回调，已由 watchdog 自动收卡",
+    ),
     # ── Context loading hint (first card only, removed on first token) ──
     "loading_context": ("Loading context...", "正在加载上下文..."),
     # ── Clarify interactive card (three-state: pending / submitted / confirmed) ──

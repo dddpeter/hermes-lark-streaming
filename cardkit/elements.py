@@ -914,9 +914,14 @@ def build_preservative_seal_actions(
     footer_show_label: bool = False,
     existing_elements: set[str] | None = None,
     card_trace_id: str = "",
+    partial_note: tuple[str, str] | None = None,
 ) -> list[dict]:
     """构建保留式封卡 batch_update actions. Inserts error panel + footer via insert_before
-    loading_icon, then deletes loading_hint + loading_icon. existing_elements filters deletes."""
+    loading_icon, then deletes loading_hint + loading_icon. existing_elements filters deletes.
+
+    v1.10.0: partial_note — (en, zh) 覆写 partial 指示文案（watchdog 拆卡用
+    它说明"本卡已自动收起、后续输出在新卡继续"），None = 默认
+    partial_continues。"""
     actions: list[dict] = []
 
     def _elem_exists(eid: str) -> bool:
@@ -963,7 +968,10 @@ def build_preservative_seal_actions(
 
     # Partial indicator or footer.
     if partial:
-        en_text, zh_text = _T["partial_continues"]
+        if partial_note:
+            en_text, zh_text = partial_note
+        else:
+            en_text, zh_text = _T["partial_continues"]
         partial_elements = [
             {"tag": "hr"},
             {

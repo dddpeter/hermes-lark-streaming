@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/项目-Vibe%20Coding-ff69b4" alt="Vibe Coding">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-4caf50.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/python-3.11+-3776AB.svg" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/version-1.9.0-ff9800.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.10.0-ff9800.svg" alt="Version">
 </p>
 
 <p align="center">
@@ -132,6 +132,12 @@ hermes_lark_streaming:
   print_step: 4                    # 打字机每次渲染字符数（默认4，范围1~10，需飞书7.23+）
   flush_interval_ms: 200           # 插件发送间隔（毫秒，70~2000，默认200）
   card_ttl_sec: 600               # 卡片存活检测超时（秒）
+  # ── 封卡自愈（watchdog，v1.10.0）──
+  seal_watchdog_sec: 120           # 会话 COMPLETING 超过该秒数仍未终态 → watchdog 重派封卡
+                                   # （30~3600，0=禁用；正常封卡 <10s，120s 已极宽裕）
+  stuck_card_timeout_sec: 1800     # 流式卡连续无任何活动超过该秒数 → 自动拆卡：
+                                   # 本卡部分封卡（内容保留），后续输出自动开新卡继续（链式，上限20张）；
+                                   # 连续两个窗口无活动才判定回合已死并回收。≥600，0=禁用
   max_tool_steps: 20               # 统一面板最多显示的工具步骤数（默认20，范围1~100）
   max_reasoning_rounds: 20         # 统一面板最多显示的推理轮次数（默认20，范围1~100）
 

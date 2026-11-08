@@ -923,8 +923,11 @@ class UnifiedControllerMixin:
         error_message: str = "",
         footer_fields: list[list[str]] | None = None,
         footer_show_label: bool = False,
+        partial_note: tuple[str, str] | None = None,
     ) -> bool:
-        """Preservative seal — update panel + add footer + close streaming."""
+        """Preservative seal — update panel + add footer + close streaming.
+
+        v1.10.0: partial_note — (en, zh) 覆写 partial 指示文案（watchdog 拆卡）。"""
         assert self._client is not None
         card_id = session.card_id
         assert card_id is not None
@@ -1087,6 +1090,7 @@ class UnifiedControllerMixin:
                     footer_show_label=footer_show_label,
                     existing_elements=session.existing_elements,
                     card_trace_id=session.card_trace_id,
+                    partial_note=partial_note,
                 )
             )
 
@@ -1314,6 +1318,7 @@ class UnifiedControllerMixin:
                                 footer_show_label=footer_show_label,
                                 existing_elements=session.existing_elements,
                                 card_trace_id=session.card_trace_id,
+                                partial_note=partial_note,
                             )
                         )
                         # batch_update BEFORE close_streaming (same order as try block)
@@ -1373,8 +1378,147 @@ class UnifiedControllerMixin:
             )
             return False
 
+    async def _watchdog_split_seal(self, session: CardSession) -> None:
+        """v1.10.0: watchdog 拆卡——超长静默回合的部分封卡（规则 2 执行体）。
+
+        卡片 close_streaming + partial 指示（"任务仍在执行，后续输出在新卡
+        继续"），会话保持非终态并置 _watchdog_split——后续任何流式事件经
+        _maybe_reactivate_for_continuation 开新续写卡（链式）；on_completed
+        经 continuation map 落到链尾新卡，完整答案 + 统计页脚正常上卡。
+        封卡失败（API 不可用）不置标记，下一轮 watchdog 重试。"""
+        if session._seal_done or session.is_terminal_phase:
+            return
+        async with session._seal_lock:
+            # 等锁期间可能已被并发封卡/终态化
+            if session._seal_done or session.is_terminal_phase or not session.card_id:
+                return
+            assert self._client is not None
+            # v1.10.0 评审#5: 与完整封卡路径对齐——先等在飞 flush 落地再拆，
+            # 避免与 _do_unified_flush 交错产生 seq conflict 抖动
+            await session.flush.wait_for_flush()
+            state = session.unified_state
+            # v1.10.0 评审#4: 水位在封卡**前**采样——封卡期间新到的 delta
+            # 不计入"已上卡"长度（宁可重入兜底重复投递一小段，也不丢字；
+            # 与 v1.8.9 flush 侧水位守卫同一保守取向）
+            _pre_seal_answer_len = len(state.answer_text) if state is not None else 0
+            try:
+                seal_ok = await self._preservative_seal(
+                    session,
+                    partial=True,
+                    footer_data={},
+                    is_error=False,
+                    is_aborted=False,
+                    footer_fields=self._cfg.footer_fields,
+                    footer_show_label=self._cfg.footer_show_label,
+                    partial_note=_T["watchdog_split_note"],
+                )
+            except Exception:
+                _logger.warning(
+                    "HLS: watchdog split seal failed msg=%s card=%s — will retry",
+                    (session.message_id or "?")[:12],
+                    session.card_id[:12],
+                    exc_info=True,
+                )
+                return
+            if seal_ok or session._streaming_closed:
+                # 成功（或服务端流式已关、卡已脱离加载态）：武装续写链。
+                session._watchdog_split = True
+                session._seal_done = True
+                # 拆卡前水位即"已上卡"长度（评审#4：封卡期间的增长不计入，
+                # 由重入尾段兜底补投）
+                session._split_sealed_answer_len = _pre_seal_answer_len
+                # 拆卡会话不走 COMPLETING 重派规则（状态保持 STREAMING）
+                session._seal_dispatched_at = 0.0
+                _logger.warning(
+                    "HLS: watchdog split seal done msg=%s card=%s — "
+                    "continuation armed (chain_depth=%d)",
+                    (session.message_id or "?")[:12],
+                    session.card_id[:12],
+                    session._chain_depth,
+                )
+            else:
+                _logger.warning(
+                    "HLS: watchdog split seal failed msg=%s card=%s — will retry",
+                    (session.message_id or "?")[:12],
+                    session.card_id[:12],
+                )
+
     async def _do_linear_complete(self, session: CardSession) -> bool:
-        """Complete the card with the unified panel architecture."""
+        """Complete the card with the unified panel architecture.
+
+        v1.10.0: 封卡串行化 + 防重入。所有派发来源（on_completed /
+        on_aborted / 续写重激活 / watchdog 重派）在此收敛：
+        * ``session._seal_lock`` 串行化——双重派发不再产生双 footer/错误面板；
+        * ``session._seal_done`` 防重入——已执行过封卡（含 watchdog 拆卡的
+          部分封卡）的重入走 _seal_reentry_finalize（补发遗留答案 + 终态化 +
+          释放），不再重复上卡。
+        注意防重入判据是 _seal_done 而非 is_terminal_phase：_finalize_abort
+        先置 ABORTED 终态再派发封卡，判终态会破坏 abort 封卡。"""
+        if session.guard.should_skip("_do_linear_complete"):
+            return False
+        async with session._seal_lock:
+            # 封卡与重入收尾都在锁内——首封可能在等锁期间完成（watchdog
+            # 重派 + 原封卡并发的窗口）；重入收尾持锁执行防并发双重文本兜底
+            if session._seal_done:
+                return await self._seal_reentry_finalize(session)
+            return await self._do_linear_complete_locked(session)
+
+    async def _seal_reentry_finalize(self, session: CardSession) -> bool:
+        """v1.10.0: _do_linear_complete 重入收尾——封卡已执行过。
+
+        拆卡（_watchdog_split）会话的 unified_state 在拆卡时保留：若拆卡后
+        on_completed 把完整答案合并进状态、或有 delta 写入（续写激活失败的
+        窗口），超出拆卡时已上卡长度的尾段无处展示——补发文本兜底防丢。
+        随后终态化（防 watchdog 反复重派）并释放重数据。"""
+        _pending_answer = ""
+        if session._watchdog_split:
+            state = session.unified_state
+            if state is not None:
+                # 拆卡时已上卡前缀；只补发其后新到的尾段
+                full = state.answer_text or ""
+                if len(full) > session._split_sealed_answer_len:
+                    _pending_answer = full[session._split_sealed_answer_len :]
+            elif session.text is not None:
+                # 状态已释放（异常路径）——整段兜底
+                _pending_answer = session.text.display_text or ""
+        if _pending_answer.strip():
+            _logger.warning(
+                "HLS: seal re-entry with pending answer tail — sending text "
+                "fallback msg=%s len=%d",
+                (session.message_id or "?")[:12],
+                len(_pending_answer),
+            )
+            try:
+                await self._send_text_fallback(session, fallback_text=_pending_answer)
+            except Exception:
+                _logger.warning(
+                    "HLS: seal re-entry text fallback failed msg=%s",
+                    (session.message_id or "?")[:12],
+                    exc_info=True,
+                )
+        if not session.is_terminal_phase:
+            # v1.10.0 评审#8: 尊重 abort 语义——拆卡后用户 /stop 的会话
+            # 终态为 ABORTED（页脚"已停止"），而非 NORMAL/COMPLETED
+            if session._was_aborted:
+                session.state = ABORTED
+                session.enter_terminal(
+                    reason=TerminalReason.ABORT,
+                    source="_do_linear_complete_reentry",
+                )
+            else:
+                session.state = COMPLETED
+                session.enter_terminal(
+                    reason=TerminalReason.NORMAL,
+                    source="_do_linear_complete_reentry",
+                )
+        try:
+            self._release_session_data(session)
+        except Exception:
+            _logger.debug("HLS: release session data failed", exc_info=True)
+        return True
+
+    async def _do_linear_complete_locked(self, session: CardSession) -> bool:
+        """封卡主体（_seal_lock 持锁执行）— v1.10.0 前的 _do_linear_complete。"""
         if session.guard.should_skip("_do_linear_complete"):
             return False
 
@@ -1569,6 +1713,8 @@ class UnifiedControllerMixin:
                 reason=TerminalReason.CREATION_FAILED,
                 source="_do_linear_complete",
             )
+            # v1.10.0: 封卡尝试已完结（无卡可封）——防 watchdog 重复重派
+            session._seal_done = True
             return False
 
         # ── Step 4: Finalize state ──
@@ -1660,6 +1806,33 @@ class UnifiedControllerMixin:
             except Exception:
                 _logger.debug("metrics: record_card_completed failed", exc_info=True)
         else:
+            # ── v1.10.0: 最小化兜底关卡（缺口 3 自愈）──
+            # seal 大批量写入失败（seq conflict 耗尽 / 网络重试耗尽 / schema
+            # error / 300309 race）时，此前直接终态化——服务端 streaming 从未
+            # close，卡片永转圈。这里单独补一次裸 close_streaming（小 payload
+            # 成功率高）：卡至少脱离加载态，页脚/面板缺失可接受。
+            if not session._streaming_closed and session.card_id:
+                try:
+                    session.sequence += 1
+                    await self._client.cardkit_close_streaming(
+                        session.card_id,
+                        sequence=session.sequence,
+                        summary=_build_seal_summary(state),
+                    )
+                    session._streaming_closed = True
+                    _logger.warning(
+                        "HLS: minimal close_streaming after seal failure "
+                        "msg=%s card=%s",
+                        (session.message_id or "?")[:12],
+                        session.card_id[:12],
+                    )
+                except Exception:
+                    _logger.warning(
+                        "HLS: minimal close_streaming failed msg=%s card=%s",
+                        (session.message_id or "?")[:12],
+                        (session.card_id or "?")[:12],
+                        exc_info=True,
+                    )
             session.state = CREATION_FAILED
             session.enter_terminal(
                 reason=TerminalReason.CREATION_FAILED,
@@ -1678,6 +1851,8 @@ class UnifiedControllerMixin:
             except Exception:
                 _logger.debug("metrics: record_card_failed failed", exc_info=True)
 
+        # v1.10.0: 封卡执行完毕（成功或失败）——防重入 + watchdog 重派判据
+        session._seal_done = True
         return seal_ok
 
 
