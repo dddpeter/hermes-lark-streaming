@@ -309,6 +309,8 @@ def _mock_client() -> AsyncMock:
     client = AsyncMock(spec=FeishuClient)
     client.cardkit_create = AsyncMock(return_value="card_id_abc")
     client.reply_card_by_id = AsyncMock(return_value="msg_id_reply")
+    # v1.10.2: 合成锚降级通道
+    client.send_card_by_id_to_chat = AsyncMock(return_value="msg_id_sent")
     client.reply_card = AsyncMock(return_value="msg_id_reply")
     client.cardkit_batch_update = AsyncMock()
     client.cardkit_stream_element = AsyncMock()
@@ -336,16 +338,34 @@ async def test_create_linear_card_replies_to_anchor_id() -> None:
     test was rewritten to drive the linear ``_do_create_linear_card``
     path (the only creation path that remains). The behaviour under
     test — replying to ``anchor_id`` when present — is unchanged.
+
+    v1.10.2: reply 锚必须是合法飞书消息 id（om_ 前缀）才走 reply 通道；
+    anchor_id 用 "om_quoted" 保持原语义。
     """
     ctrl = _setup_ctrl(linear=True)
     session = _make_session("msg", linear=True)
-    session.anchor_id = "quoted"
+    session.anchor_id = "om_quoted"
     ctrl._sessions["msg"] = session
 
     await ctrl._do_create_linear_card(session)
 
     ctrl._client.reply_card_by_id.assert_called_once()
-    assert ctrl._client.reply_card_by_id.call_args.args[0] == "quoted"
+    assert ctrl._client.reply_card_by_id.call_args.args[0] == "om_quoted"
+
+
+@pytest.mark.asyncio
+async def test_create_linear_card_synthetic_anchor_sends_to_chat() -> None:
+    """v1.10.2: 非 om_ 锚（hermes 合成锚 proc_*/deleg_* 等）不再 reply——
+    直接 send_card_by_id_to_chat（生产 99992354 ×12 的降级通道）。"""
+    ctrl = _setup_ctrl(linear=True)
+    session = _make_session("proc_4562263e5bd9", linear=True)
+    session.anchor_id = "proc_4562263e5bd9"
+    ctrl._sessions["proc_4562263e5bd9"] = session
+
+    await ctrl._do_create_linear_card(session)
+
+    ctrl._client.reply_card_by_id.assert_not_called()
+    ctrl._client.send_card_by_id_to_chat.assert_called_once()
 
 
 def _capture_split_calls(

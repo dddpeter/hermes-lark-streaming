@@ -196,7 +196,11 @@ class TestOnMessageStarted:
             on_message_started(message_id="m1", chat_id="c1", anchor_id="a1")
 
         ctrl.on_message_started.assert_called_once_with(
-            message_id="m1", chat_id="c1", anchor_id="a1", thread_id=None
+            message_id="m1",
+            chat_id="c1",
+            anchor_id="a1",
+            thread_id=None,
+            turn_home=None,  # v1.10.2: wrapper 显式传入的 profile home
         )
 
     def test_delegates_without_anchor_id(self) -> None:
@@ -208,7 +212,11 @@ class TestOnMessageStarted:
             on_message_started(message_id="m1", chat_id="c1")
 
         ctrl.on_message_started.assert_called_once_with(
-            message_id="m1", chat_id="c1", anchor_id=None, thread_id=None
+            message_id="m1",
+            chat_id="c1",
+            anchor_id=None,
+            thread_id=None,
+            turn_home=None,  # v1.10.2
         )
 
     def test_returns_none_when_disabled(self) -> None:

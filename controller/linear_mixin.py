@@ -231,6 +231,59 @@ class UnifiedControllerMixin:
     _cleanup: Callable[[str], None]
     _flush_deferred_background_reviews: Callable[[CardSession], None]
 
+    async def _reply_card_to_chat(self, session: CardSession, card_id: str) -> str:
+        """v1.10.2: 占位卡投递的三级通道（会话绑定路由）。
+
+        1. reply_to 是合法飞书消息 id（om_ 前缀）→ reply_card_by_id（锚定
+           用户消息，首选）；
+        2. 合成锚（hermes 0.21+ completion/async_delegation 生成的 proc_*/
+           deleg_* 等）→ 直接 send_card_by_id_to_chat（reply 必然 99992354，
+           生产 14 天 ×12，锚点保不住就保内容）；
+        3. reply 报 230002（bot not in chat）→ 退避 0.5s 重试一次（同 chat
+           成败交替的生产实证：飞书侧成员索引瞬时态），仍失败再降级发到
+           chat。错 bot 场景（v1.10.2 已根治的 ambient 路由竞态）三级全
+           失败属预期——降级链只为吸收飞书侧瞬时错误。
+        """
+        client = self._client_for(session)
+        reply_to = session.anchor_id or session.message_id
+        if reply_to and not str(reply_to).startswith("om_"):
+            _logger.info(
+                "HLS: synthetic reply anchor %s (not om_) — sending card to "
+                "chat instead msg=%s trace=%s",
+                str(reply_to)[:20],
+                (session.message_id or "?")[:12],
+                session.card_trace_id,
+            )
+            return await client.send_card_by_id_to_chat(session.chat_id, card_id)
+        try:
+            return await client.reply_card_by_id(reply_to, card_id)
+        except FeishuAPIError as e:
+            if e.code != 230002:
+                raise
+            _logger.warning(
+                "HLS: reply 230002 (bot not in chat?) — retry once after "
+                "0.5s msg=%s trace=%s",
+                (session.message_id or "?")[:12],
+                session.card_trace_id,
+            )
+            await asyncio.sleep(0.5)
+            try:
+                return await client.reply_card_by_id(reply_to, card_id)
+            except FeishuAPIError as e2:
+                if e2.code in (230002, 99992354) and session.chat_id:
+                    _logger.warning(
+                        "HLS: reply failed twice (code=%s) — falling back to "
+                        "send-to-chat msg=%s trace=%s chat=%s",
+                        e2.code,
+                        (session.message_id or "?")[:12],
+                        session.card_trace_id,
+                        session.chat_id[:12],
+                    )
+                    return await client.send_card_by_id_to_chat(
+                        session.chat_id, card_id
+                    )
+                raise
+
     async def _do_create_linear_card(self, session: CardSession) -> None:
         """Create the initial placeholder card — loading hint only, no panel."""
         if session.state != IDLE:
@@ -249,7 +302,6 @@ class UnifiedControllerMixin:
             assert self._client is not None
 
             try:
-                reply_to = session.anchor_id or session.message_id
                 card = build_streaming_card_v2(
                     include_unified_panel=False,  # Panel added on first token
                     include_answer_element=False,  # Answer element added with panel
@@ -258,8 +310,8 @@ class UnifiedControllerMixin:
                     print_strategy=self._cfg.print_strategy,
                     print_step=self._cfg.print_step,
                 )
-                card_id = await self._client.cardkit_create(card)
-                card_msg_id = await self._client.reply_card_by_id(reply_to, card_id)
+                card_id = await self._client_for(session).cardkit_create(card)
+                card_msg_id = await self._reply_card_to_chat(session, card_id)
 
                 session.card_id = card_id
                 session.card_msg_id = card_msg_id
@@ -473,7 +525,7 @@ class UnifiedControllerMixin:
                 _has_panel = state.panel_visible
                 session.sequence += 1
                 try:
-                    await self._client.cardkit_batch_update(
+                    await self._client_for(session).cardkit_batch_update(
                         session.card_id,
                         actions,
                         sequence=session.sequence,
@@ -525,7 +577,7 @@ class UnifiedControllerMixin:
                         if not session._streaming_closed:
                             try:
                                 session.sequence += 1
-                                await self._client.cardkit_close_streaming(
+                                await self._client_for(session).cardkit_close_streaming(
                                     session.card_id,
                                     sequence=session.sequence,
                                     summary="",
@@ -610,7 +662,7 @@ class UnifiedControllerMixin:
                 _src_len = len(state.answer_text)
                 session.sequence += 1
                 try:
-                    await self._client.cardkit_stream_element(
+                    await self._client_for(session).cardkit_stream_element(
                         session.card_id,
                         ANSWER_ELEMENT_ID,
                         content,
@@ -692,7 +744,7 @@ class UnifiedControllerMixin:
         if actions:
             session.sequence += 1
             try:
-                await self._client.cardkit_batch_update(
+                await self._client_for(session).cardkit_batch_update(
                     session.card_id,
                     actions,
                     sequence=session.sequence,
@@ -785,7 +837,7 @@ class UnifiedControllerMixin:
             _src_len = len(state.answer_text)
             session.sequence += 1
             try:
-                await self._client.cardkit_stream_element(
+                await self._client_for(session).cardkit_stream_element(
                     session.card_id,
                     ANSWER_ELEMENT_ID,
                     content,
@@ -959,7 +1011,7 @@ class UnifiedControllerMixin:
                     )
                     try:
                         session.sequence += 1
-                        await self._client.cardkit_batch_update(
+                        await self._client_for(session).cardkit_batch_update(
                             session.card_id,
                             [
                                 {
@@ -1005,7 +1057,7 @@ class UnifiedControllerMixin:
                             len(content),
                             card_id[:12],
                         )
-                        await self._client.cardkit_stream_element(
+                        await self._client_for(session).cardkit_stream_element(
                             session.card_id,
                             ANSWER_ELEMENT_ID,
                             content,
@@ -1207,7 +1259,7 @@ class UnifiedControllerMixin:
 
             if seal_actions:
                 session.sequence += 1
-                await self._client.cardkit_batch_update(
+                await self._client_for(session).cardkit_batch_update(
                     card_id,
                     seal_actions,
                     sequence=session.sequence,
@@ -1230,7 +1282,7 @@ class UnifiedControllerMixin:
                 )
                 # ── Bug fix (v1.0.3): Pass summary IN close_streaming ──
                 # must be in THIS request — passing summary="" and then
-                await self._client.cardkit_close_streaming(
+                await self._client_for(session).cardkit_close_streaming(
                     card_id,
                     sequence=session.sequence,
                     summary=seal_summary,
@@ -1244,7 +1296,7 @@ class UnifiedControllerMixin:
                 if seal_summary:
                     try:
                         session.sequence += 1
-                        await self._client.cardkit_update_summary(
+                        await self._client_for(session).cardkit_update_summary(
                             card_id,
                             seal_summary,
                             sequence=session.sequence,
@@ -1324,7 +1376,7 @@ class UnifiedControllerMixin:
                         # batch_update BEFORE close_streaming (same order as try block)
                         if retry_actions:
                             session.sequence += 1
-                            await self._client.cardkit_batch_update(
+                            await self._client_for(session).cardkit_batch_update(
                                 card_id,
                                 retry_actions,
                                 sequence=session.sequence,
@@ -1335,7 +1387,7 @@ class UnifiedControllerMixin:
                             # Recompute seal_summary for retry (state may have changed)
                             retry_summary = _build_seal_summary(state)
                             session.sequence += 1
-                            await self._client.cardkit_close_streaming(
+                            await self._client_for(session).cardkit_close_streaming(
                                 card_id,
                                 sequence=session.sequence,
                                 summary=retry_summary,
@@ -1605,7 +1657,7 @@ class UnifiedControllerMixin:
                 ]
                 try:
                     session.sequence += 1
-                    await self._client.cardkit_batch_update(
+                    await self._client_for(session).cardkit_batch_update(
                         session.card_id,
                         drain_actions,
                         sequence=session.sequence,
@@ -1660,7 +1712,7 @@ class UnifiedControllerMixin:
                         len(content),
                         (session.message_id or "?")[:12],
                     )
-                    await self._client.cardkit_stream_element(
+                    await self._client_for(session).cardkit_stream_element(
                         session.card_id,
                         ANSWER_ELEMENT_ID,
                         content,
@@ -1847,7 +1899,7 @@ class UnifiedControllerMixin:
             if not session._streaming_closed and session.card_id:
                 try:
                     session.sequence += 1
-                    await self._client.cardkit_close_streaming(
+                    await self._client_for(session).cardkit_close_streaming(
                         session.card_id,
                         sequence=session.sequence,
                         summary=_build_seal_summary(state),

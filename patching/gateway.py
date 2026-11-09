@@ -15,7 +15,6 @@ from ..config.reader import (
     current_hermes_home,
     reset_turn_home,
     set_turn_home,
-    set_turn_home_thread,
 )
 from ..state.phase import TERMINAL_PHASES
 from . import (
@@ -135,6 +134,7 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
                     chat_id=chat_id,
                     anchor_id=anchor_id,
                     thread_id=thread_id,
+                    turn_home=_turn_home_resolved,
                 )
             except Exception:
                 _logger.warning("HLS: suppressed exception", exc_info=True)
@@ -148,7 +148,12 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
             "turn_home": _turn_home_resolved,  # v1.8.5: multiplex per-profile home
         }
         _msg_ctx.set(msg_context)
-        set_turn_home_thread(_turn_home_resolved)
+        # v1.10.2: 不再 set_turn_home_thread——本 wrapper 跑在 loop 线程上，
+        # threading.local 是全 loop 共享的：多 profile turn 并发时它是"最近
+        # 进入 wrapper 的 turn"的 home，其它 turn 在 contextvar 缺失时的
+        # fallback 会路由到错误的 bot（2026-11 生产 230002 根因）。loop 上
+        # 的路由一律走 ContextVar（_TURN_HOME，任务级隔离）；thread-local
+        # 仅保留给真正的 worker 线程（cron 包装器）。
 
         # v1.3.4 fix (P1): 确保 orig() 抛异常时 _msg_ctx / _started_msg_ids
         # 导致 _msg_ctx 保留 stale event_message_id，下一条消息的
@@ -160,7 +165,9 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
             _thread_local_ctx.data = None
             # v1.8.5: 解绑 turn home（回退实时解析）
             set_turn_home(None)
-            set_turn_home_thread(None)
+            # v1.10.2: set_turn_home_thread(None) 移除——loop 线程不再写
+            # thread-local（见上方 wrapper 注释）；旧 turn 结束清掉新 turn
+            # 的绑定是另一种竞态方向。
 
         try:
             result = await orig(self, event, source, *args, **kwargs)
@@ -191,7 +198,10 @@ def _wrap_handle_message_with_agent(orig: Callable) -> Callable:
                     _lookup_id = _eid or (ctx.get("message_id") if ctx else "") or ""
                     _sess = _ctrl._sess_get(_lookup_id) if _lookup_id else None
                     if _sess and _sess.card_msg_id:
-                        if _sess.state in TERMINAL_PHASES or _sess.state == "completing":
+                        if (
+                            _sess.state in TERMINAL_PHASES
+                            or _sess.state == "completing"
+                        ):
                             _logger.info(
                                 "card session exists for msg=%s (state=%s), "
                                 "suppressing gateway reply",
@@ -355,7 +365,9 @@ def _compression_turn_outcome(result: Any) -> bool:
     （会走 MISMATCH 分支整段替换掉已流式输出的真实答案）。"""
     if not isinstance(result, dict):
         return False
-    return bool(result.get("compression_exhausted") or result.get("compression_deferred"))
+    return bool(
+        result.get("compression_exhausted") or result.get("compression_deferred")
+    )
 
 
 def _compression_error_prefix(error_message: str) -> str:
@@ -461,7 +473,8 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                 _msg_ctx.set(ctx)
                 _thread_local_ctx.data = dict(ctx)
                 set_turn_home(ctx["turn_home"])
-                set_turn_home_thread(ctx["turn_home"])
+                # v1.10.2: set_turn_home_thread 移除（loop 线程不写共享
+                # thread-local，同 _wrap_handle_message_with_agent 注释）
 
                 # anchor_id fix: use event_message_id as the new card's
                 # v1.8.1 (P1): interrupt 链路同样传递话题隔离键，新卡归入
@@ -489,6 +502,7 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                         chat_id=ctx["chat_id"],
                         anchor_id=event_message_id,
                         thread_id=_src_thread_id,
+                        turn_home=ctx.get("turn_home"),
                     )
                 except Exception:
                     _logger.warning("HLS: suppressed exception", exc_info=True)
@@ -519,7 +533,6 @@ def _wrap_run_agent(orig: Callable) -> Callable:
                 _msg_ctx.set(_saved_parent_ctx)
                 _thread_local_ctx.data = dict(_saved_parent_ctx)
                 set_turn_home(_saved_parent_ctx.get("turn_home"))
-                set_turn_home_thread(_saved_parent_ctx.get("turn_home"))
             raise
 
         # We must fire B's COMPLETE hook first (with B's result), then
@@ -808,7 +821,6 @@ def _wrap_run_agent(orig: Callable) -> Callable:
             _thread_local_ctx.data = dict(_saved_parent_ctx)
             # v1.8.5: 恢复 parent 的 turn home（中断链跨 profile 场景）
             set_turn_home(_saved_parent_ctx.get("turn_home"))
-            set_turn_home_thread(_saved_parent_ctx.get("turn_home"))
 
         return result
 
@@ -895,9 +907,9 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
         _bg_thread_id = getattr(source, "thread_id", None)
 
         # v1.8.5: /bg 任务归属发起消息的 profile——绑定 turn home
+        # v1.10.2: thread-local 写入移除（loop 线程不写共享 thread-local）
         _bg_home = str(current_hermes_home())
         set_turn_home(_bg_home)
-        set_turn_home_thread(_bg_home)
 
         # Set up message context so _maybe_wrap_callbacks works
         _msg_ctx.set(
@@ -922,6 +934,7 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
                 chat_id=chat_id,
                 anchor_id=_bg_anchor,
                 thread_id=_bg_thread_id,
+                turn_home=_bg_home,
             )
         except Exception:
             _logger.debug("background task START hook failed", exc_info=True)
@@ -1070,7 +1083,6 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
             _thread_local_ctx.data = None
             # v1.8.5: 解绑 /bg 任务的 turn home
             set_turn_home(None)
-            set_turn_home_thread(None)
 
     return wrapper
 

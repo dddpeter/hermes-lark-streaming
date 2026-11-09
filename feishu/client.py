@@ -61,6 +61,7 @@ def _ensure_lark_names() -> None:
         ReplyMessageRequest,
         ReplyMessageRequestBody,
     )
+
     global _TOKEN_ERROR_BASES
     try:
         from lark_oapi.core.exception import ObtainAccessTokenException
@@ -70,9 +71,11 @@ def _ensure_lark_names() -> None:
         _TOKEN_ERROR_BASES = ()
     _lark_names_loaded = True
 
+
 # v1.3.4 fix (P1): lark_oapi SDK 的 Transport.aexecute 不捕获网络异常，
 try:
     import httpx
+
     _NETWORK_ERROR_BASES: tuple = (httpx.RequestError, httpx.TimeoutException)
 except ImportError:  # 极端情况下 httpx 不可用（lark_oapi 依赖它，不应发生）
     _NETWORK_ERROR_BASES = ()
@@ -82,12 +85,14 @@ _TOKEN_ERROR_BASES: tuple = ()
 
 _logger = logging.getLogger("hermes_lark_streaming")
 
+
 def _sanitize_message(msg: str) -> str:
     """从错误消息中移除 token 和 secret."""
     msg = re.sub(r'(tenant_access_token["\s:=]+)([A-Za-z0-9_-]{10,})', r"\1***", msg)
     msg = re.sub(r'(app_secret["\s:=]+)([A-Za-z0-9]{10,})', r"\1***", msg)
     msg = re.sub(r"(Bearer\s+)([A-Za-z0-9_-]{10,})", r"\1***", msg)
     return msg
+
 
 class FeishuAPIError(RuntimeError):
     """飞书 API 错误，携带 API 错误码和 log_id."""
@@ -129,13 +134,18 @@ class FeishuAPIError(RuntimeError):
         # 兜底：返回完整消息
         return msg[:200]
 
+
 CARDKIT_CONTENT_FAILED = 230099  # 卡片内容创建失败（通用码，需检查子错误）
 CARDKIT_ELEMENT_LIMIT = 11310  # 子码: 卡片元素数量超限
-CARDKIT_ELEMENT_LIMIT_DIRECT = 300305  # 直报码: 卡片元素数量超限（cardkit_update 返回此码）
+CARDKIT_ELEMENT_LIMIT_DIRECT = (
+    300305  # 直报码: 卡片元素数量超限（cardkit_update 返回此码）
+)
 CARDKIT_SCHEMA_ERROR = 300315  # 卡片 Schema 非法属性 (unknown property) OR element not found for insert_before
 CARDKIT_STREAMING_CLOSED = 300309  # 卡片流式模式已关闭
 CARDKIT_SEQUENCE_CONFLICT = 300317  # sequence 冲突
-CARDKIT_ELEMENT_NOT_FOUND = 300313  # 元素不存在（add_elements 后服务端尚未持久化时的竞态）
+CARDKIT_ELEMENT_NOT_FOUND = (
+    300313  # 元素不存在（add_elements 后服务端尚未持久化时的竞态）
+)
 CARDKIT_ELEMENT_NOT_FOUND_ALT = 300314  # delete_elements 不存在的元素
 MSG_NOT_FOUND = 1000023  # 消息不存在/已删除
 
@@ -145,10 +155,10 @@ _RE_ELEMENT_NOT_FOUND = re.compile(r"not find elementID", re.IGNORECASE)
 # 参考 Cheerwhy / openclaw-lark: 这三个错误码是飞书 CardKit 的瞬态错误，
 # v1.3.4 fix (P1): 新增 99991400 (接口频率限制) — 飞书开放平台对单个 API
 CARDKIT_TRANSIENT_CODES = {
-    2200,     # CardKit 内部超时
-    1663,     # CardKit 服务端瞬态错误
-    300000,   # CardKit 通用内部错误
-    99991400, # 接口频率限制（per-API rate limit，HTTP 400）
+    2200,  # CardKit 内部超时
+    1663,  # CardKit 服务端瞬态错误
+    300000,  # CardKit 通用内部错误
+    99991400,  # 接口频率限制（per-API rate limit，HTTP 400）
 }
 
 # 瞬态错误重试策略 — 指数退避
@@ -158,12 +168,14 @@ _TRANSIENT_MAX_RETRIES = len(_TRANSIENT_RETRY_DELAYS)
 _ELEMENT_NOT_FOUND_RETRY_DELAYS = (0.2, 0.2, 0.2)
 _ELEMENT_NOT_FOUND_MAX_RETRIES = len(_ELEMENT_NOT_FOUND_RETRY_DELAYS)
 
+
 def is_element_limit_error(e: "FeishuAPIError") -> bool:
     """判断 FeishuAPIError 是否为元素超限错误。"""
-    return (
-        e.code == CARDKIT_ELEMENT_LIMIT_DIRECT
-        or (e.code == CARDKIT_CONTENT_FAILED and e.extract_sub_code() == CARDKIT_ELEMENT_LIMIT)
+    return e.code == CARDKIT_ELEMENT_LIMIT_DIRECT or (
+        e.code == CARDKIT_CONTENT_FAILED
+        and e.extract_sub_code() == CARDKIT_ELEMENT_LIMIT
     )
+
 
 def is_schema_error(e: "FeishuAPIError") -> bool:
     """判断 FeishuAPIError 是否为卡片 Schema 非法属性错误。"""
@@ -173,6 +185,7 @@ def is_schema_error(e: "FeishuAPIError") -> bool:
     if _RE_ELEMENT_NOT_FOUND.search(str(e)):
         return False
     return True
+
 
 def is_element_not_found_error(e: "FeishuAPIError") -> bool:
     """判断 FeishuAPIError 是否为"元素不存在"错误。"""
@@ -185,12 +198,14 @@ def is_element_not_found_error(e: "FeishuAPIError") -> bool:
         return True
     return False
 
+
 # v1.8.0 (P2-3): 300315 错误消息携带被引用的 elementID（真飞书 E2E 实测格式
 # "ErrMsg: not find elementID : context_loading_hint;"）。取出名字可以让上层
 # 精确再同步 session 跟踪状态，而不是只能笼统地当作"某元素不存在"。
 _RE_NOT_FOUND_ELEMENT_ID = re.compile(
     r"not find elementID\s*[:：]?\s*([A-Za-z0-9_-]+)", re.IGNORECASE
 )
+
 
 def extract_not_found_element_id(e: "FeishuAPIError") -> str | None:
     """从元素不存在错误中提取被点名的 element_id（未点名返回 None）.
@@ -202,6 +217,7 @@ def extract_not_found_element_id(e: "FeishuAPIError") -> str | None:
         return None
     m = _RE_NOT_FOUND_ELEMENT_ID.search(str(e))
     return m.group(1) if m else None
+
 
 @dataclass(frozen=True)
 class FeishuClientConfig:
@@ -215,6 +231,7 @@ class FeishuClientConfig:
         if not isinstance(self.app_secret, str) or not self.app_secret.strip():
             raise ValueError("app_secret is required")
 
+
 def _is_transient_error(e: FeishuAPIError) -> bool:
     """判断 FeishuAPIError 是否为 CardKit 瞬态错误（可重试）."""
     if e.code in CARDKIT_TRANSIENT_CODES:
@@ -225,13 +242,16 @@ def _is_transient_error(e: FeishuAPIError) -> bool:
         return sub is not None and sub not in (CARDKIT_ELEMENT_LIMIT,)
     return False
 
+
 class FeishuClient:
     """飞书 REST API 封装 — 基于 lark-oapi SDK."""
 
     def __init__(self, config: FeishuClientConfig) -> None:
         _ensure_lark_names()
         self.config = config
-        builder = lark.Client.builder().app_id(config.app_id).app_secret(config.app_secret)
+        builder = (
+            lark.Client.builder().app_id(config.app_id).app_secret(config.app_secret)
+        )
         # .domain() 只接受域名（如 https://open.feishu.cn），不带 /open-apis 后缀
         # 默认域名 https://open.feishu.cn 不需要调 .domain()（SDK 默认就是它）
         domain = config.base_url
@@ -256,6 +276,7 @@ class FeishuClient:
                 # v1.1.0: Record successful API call
                 try:
                     from ..aowen import record_api_call
+
                     record_api_call(operation)
                 except Exception:
                     _logger.debug("metrics: record_api_call failed", exc_info=True)
@@ -268,7 +289,11 @@ class FeishuClient:
                     delay = _TRANSIENT_RETRY_DELAYS[attempt]
                     _logger.info(
                         "transient retry: %s attempt=%d/%d code=%s delay=%.2fs",
-                        operation, attempt + 1, max_retries, e.code, delay,
+                        operation,
+                        attempt + 1,
+                        max_retries,
+                        e.code,
+                        delay,
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -282,7 +307,11 @@ class FeishuClient:
                     delay = _TRANSIENT_RETRY_DELAYS[attempt]
                     _logger.info(
                         "transient retry (network): %s attempt=%d/%d error=%s delay=%.2fs",
-                        operation, attempt + 1, max_retries, type(e).__name__, delay,
+                        operation,
+                        attempt + 1,
+                        max_retries,
+                        type(e).__name__,
+                        delay,
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -293,7 +322,11 @@ class FeishuClient:
                     delay = _TRANSIENT_RETRY_DELAYS[attempt]
                     _logger.info(
                         "transient retry (token): %s attempt=%d/%d error=%s delay=%.2fs",
-                        operation, attempt + 1, max_retries, type(e).__name__, delay,
+                        operation,
+                        attempt + 1,
+                        max_retries,
+                        type(e).__name__,
+                        delay,
                     )
                     await asyncio.sleep(delay)
                     continue
@@ -314,19 +347,22 @@ class FeishuClient:
                 pass
             if not log_id:
                 # SDK async 路径 bug 兜底：error 是 dict，含 log_id 字段
-                err = getattr(response, 'error', None)
+                err = getattr(response, "error", None)
                 if isinstance(err, dict):
                     log_id = err.get("log_id", "") or ""
                 elif isinstance(err, str):
                     # error 可能是 JSON 字符串或含 log_id 的文本
                     # v1.7.0 (R1-13): removed the redundant function-level
                     # `import re as _re` — module-level import at the top.
-                    m = re.search(r'log_id["\']?\s*[:=]\s*["\']?([A-Za-z0-9]{20,})', err)
+                    m = re.search(
+                        r'log_id["\']?\s*[:=]\s*["\']?([A-Za-z0-9]{20,})', err
+                    )
                     if m:
                         log_id = m.group(1)
             # v1.1.0: Record API error metrics
             try:
                 from ..aowen import record_api_error
+
                 record_api_error(code, operation)
             except Exception:
                 _logger.debug("metrics: record_api_error failed", exc_info=True)
@@ -362,11 +398,17 @@ class FeishuClient:
 
     async def reply_card(self, message_id: str, card: dict[str, Any]) -> str:
         """回复消息，返回 message_id."""
+
         async def _do():
             request = (
                 ReplyMessageRequest.builder()
                 .message_id(message_id)
-                .request_body(ReplyMessageRequestBody.builder().msg_type("interactive").content(self._dumps(card)).build())
+                .request_body(
+                    ReplyMessageRequestBody.builder()
+                    .msg_type("interactive")
+                    .content(self._dumps(card))
+                    .build()
+                )
                 .build()
             )
             resp = await self._client.im.v1.message.areply(request)
@@ -381,6 +423,7 @@ class FeishuClient:
 
     async def reply_text(self, message_id: str, text: str) -> str:
         """回复纯文本消息，返回 message_id."""
+
         async def _do():
             request = (
                 ReplyMessageRequest.builder()
@@ -405,6 +448,7 @@ class FeishuClient:
 
     async def reply_card_by_id(self, message_id: str, card_id: str) -> str:
         """通过 card_id 回复 CardKit 卡片消息，返回 message_id."""
+
         async def _do():
             request = (
                 ReplyMessageRequest.builder()
@@ -412,7 +456,9 @@ class FeishuClient:
                 .request_body(
                     ReplyMessageRequestBody.builder()
                     .msg_type("interactive")
-                    .content(self._dumps({"type": "card", "data": {"card_id": card_id}}))
+                    .content(
+                        self._dumps({"type": "card", "data": {"card_id": card_id}})
+                    )
                     .build()
                 )
                 .build()
@@ -427,6 +473,37 @@ class FeishuClient:
         # 已有重试，这步却没有）—— 瞬态失败会把整张卡打成 CREATION_FAILED。
         return await self._retry_transient("reply_card_by_id", _do)
 
+    async def send_card_by_id_to_chat(self, chat_id: str, card_id: str) -> str:
+        """v1.10.2: 把 CardKit 卡片作为新消息发到 chat（非 reply），返回 message_id.
+
+        合成锚降级通道：hermes 0.21+ 在 completion / async_delegation 场景
+        生成的 event_message_id（proc_*/deleg_* 等）不是合法的飞书消息 id，
+        reply 必然 99992354（生产 14 天 ×12）——此时退回"发到 chat"，卡片
+        仍能上屏（丢失 reply 锚定，保内容不保锚点）。"""
+
+        async def _do():
+            request = (
+                CreateMessageRequest.builder()
+                .receive_id_type("chat_id")
+                .request_body(
+                    CreateMessageRequestBody.builder()
+                    .receive_id(chat_id)
+                    .msg_type("interactive")
+                    .content(
+                        self._dumps({"type": "card", "data": {"card_id": card_id}})
+                    )
+                    .build()
+                )
+                .build()
+            )
+            resp = await self._client.im.v1.message.acreate(request)
+            self._check(resp, "send_card_by_id_to_chat")
+            if resp.data and resp.data.message_id:
+                return str(resp.data.message_id)
+            raise FeishuAPIError("send_card_by_id_to_chat: response missing message_id")
+
+        return await self._retry_transient("send_card_by_id_to_chat", _do)
+
     async def update_card(self, message_id: str, card: dict[str, Any]) -> None:
         """PATCH 更新已发送的卡片（IM PATCH 通道）."""
 
@@ -434,7 +511,9 @@ class FeishuClient:
             request = (
                 PatchMessageRequest.builder()
                 .message_id(message_id)
-                .request_body(PatchMessageRequestBody.builder().content(self._dumps(card)).build())
+                .request_body(
+                    PatchMessageRequestBody.builder().content(self._dumps(card)).build()
+                )
                 .build()
             )
             resp = await self._client.im.v1.message.apatch(request)
@@ -448,10 +527,16 @@ class FeishuClient:
 
     async def cardkit_create(self, card: dict[str, Any]) -> str:
         """创建 CardKit 实体，返回 card_id."""
+
         async def _do():
             request = (
                 CreateCardRequest.builder()
-                .request_body(CreateCardRequestBody.builder().type("card_json").data(self._dumps(card)).build())
+                .request_body(
+                    CreateCardRequestBody.builder()
+                    .type("card_json")
+                    .data(self._dumps(card))
+                    .build()
+                )
                 .build()
             )
             t0 = _time.monotonic()
@@ -474,6 +559,7 @@ class FeishuClient:
         sequence: int = 0,
     ) -> None:
         """流式更新卡片内指定 element 的内容（打字机效果）."""
+
         async def _do():
             body_builder = ContentCardElementRequestBody.builder().content(content)
             body_builder = body_builder.sequence(sequence)
@@ -512,7 +598,8 @@ class FeishuClient:
                 # dropped answer text with zero diagnosable log evidence).
                 _logger.warning(
                     "HLS: stream_element network failure after retries card=%s el=%s",
-                    card_id[:12], element_id[:16],
+                    card_id[:12],
+                    element_id[:16],
                     exc_info=True,
                 )
                 raise
@@ -524,15 +611,17 @@ class FeishuClient:
                     delay = _ELEMENT_NOT_FOUND_RETRY_DELAYS[attempt]
                     _logger.info(
                         "HLS: stream_element 300313 retry card=%s el=%s attempt=%d/%d delay=%.1fs",
-                        card_id[:12], element_id[:16],
-                        attempt + 1, _ELEMENT_NOT_FOUND_MAX_RETRIES, delay,
+                        card_id[:12],
+                        element_id[:16],
+                        attempt + 1,
+                        _ELEMENT_NOT_FOUND_MAX_RETRIES,
+                        delay,
                     )
                     await asyncio.sleep(delay)
                     continue
                 raise
         if last_error:
             raise last_error  # unreachable
-
 
     async def cardkit_update(
         self,
@@ -541,12 +630,18 @@ class FeishuClient:
         sequence: int = 0,
     ) -> None:
         """全量更新 CardKit 卡片."""
+
         async def _do():
             body_builder = UpdateCardRequestBody.builder().card(
                 Card.builder().type("card_json").data(self._dumps(card)).build()
             )
             body_builder = body_builder.sequence(sequence)
-            request = UpdateCardRequest.builder().card_id(card_id).request_body(body_builder.build()).build()
+            request = (
+                UpdateCardRequest.builder()
+                .card_id(card_id)
+                .request_body(body_builder.build())
+                .build()
+            )
             resp = await self._client.cardkit.v1.card.aupdate(request)
             self._check(resp, "cardkit_update")
 
@@ -560,13 +655,28 @@ class FeishuClient:
         sequence: int = 0,
     ) -> None:
         """局部更新 CardKit 卡片（增删改组件）."""
+
         async def _do():
-            body_builder = BatchUpdateCardRequestBody.builder().sequence(sequence).actions(self._dumps(actions))
-            request = BatchUpdateCardRequest.builder().card_id(card_id).request_body(body_builder.build()).build()
+            body_builder = (
+                BatchUpdateCardRequestBody.builder()
+                .sequence(sequence)
+                .actions(self._dumps(actions))
+            )
+            request = (
+                BatchUpdateCardRequest.builder()
+                .card_id(card_id)
+                .request_body(body_builder.build())
+                .build()
+            )
             t0 = _time.monotonic()
             resp = await self._client.cardkit.v1.card.abatch_update(request)
             elapsed_ms = (_time.monotonic() - t0) * 1000
-            _logger.debug("perf: feishu_batch_update card=%s elapsed=%.0fms actions=%d", card_id[:12], elapsed_ms, len(actions))
+            _logger.debug(
+                "perf: feishu_batch_update card=%s elapsed=%.0fms actions=%d",
+                card_id[:12],
+                elapsed_ms,
+                len(actions),
+            )
             self._check(resp, "cardkit_batch_update")
 
         await self._retry_transient("cardkit_batch_update", _do)
@@ -595,9 +705,16 @@ class FeishuClient:
             }
 
         async def _do():
-            body_builder = SettingsCardRequestBody.builder().settings(self._dumps(settings))
+            body_builder = SettingsCardRequestBody.builder().settings(
+                self._dumps(settings)
+            )
             body_builder = body_builder.sequence(sequence)
-            request = SettingsCardRequest.builder().card_id(card_id).request_body(body_builder.build()).build()
+            request = (
+                SettingsCardRequest.builder()
+                .card_id(card_id)
+                .request_body(body_builder.build())
+                .build()
+            )
             resp = await self._client.cardkit.v1.card.asettings(request)
             self._check(resp, "cardkit_close_streaming")
 
@@ -627,9 +744,16 @@ class FeishuClient:
         }
 
         async def _do():
-            body_builder = SettingsCardRequestBody.builder().settings(self._dumps(settings))
+            body_builder = SettingsCardRequestBody.builder().settings(
+                self._dumps(settings)
+            )
             body_builder = body_builder.sequence(sequence)
-            request = SettingsCardRequest.builder().card_id(card_id).request_body(body_builder.build()).build()
+            request = (
+                SettingsCardRequest.builder()
+                .card_id(card_id)
+                .request_body(body_builder.build())
+                .build()
+            )
             resp = await self._client.cardkit.v1.card.asettings(request)
             self._check(resp, "cardkit_update_summary")
 
@@ -656,7 +780,12 @@ class FeishuClient:
             file = io.BytesIO(data)
             request = (
                 CreateImageRequest.builder()
-                .request_body(CreateImageRequestBody.builder().image_type("message").image(file).build())
+                .request_body(
+                    CreateImageRequestBody.builder()
+                    .image_type("message")
+                    .image(file)
+                    .build()
+                )
                 .build()
             )
             resp = await self._client.im.v1.image.acreate(request)
@@ -664,12 +793,15 @@ class FeishuClient:
                 return str(resp.data.image_key)
             return None
         except Exception:
-            _logger.debug("image upload (API call) failed for %s", image_url, exc_info=True)
+            _logger.debug(
+                "image upload (API call) failed for %s", image_url, exc_info=True
+            )
             return None
 
     async def upload_local_image(self, image_path: str) -> str | None:
         """Upload a local image file to Feishu and return the img_key."""
         import os
+
         try:
             if not os.path.exists(image_path):
                 return None

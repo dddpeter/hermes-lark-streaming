@@ -248,11 +248,14 @@ async def _dispatch_feishu_outbound(
                         try:
                             from .hooks import on_message_aborted
 
-                            # v1.9.0: 契约要求 ctrl（hooks.py 签名 (*, ctrl,
-                            # message_id)）—— 此前缺参 TypeError 被下方 except
-                            # 静默吞掉，/stop 检测到的卡中止从未真正送达
-                            # on_aborted（流式卡不封卡，等其它注入点兼底）。
-                            on_message_aborted(ctrl=_ctrl, message_id=_sess.message_id)
+                            # v1.10.2: 去掉 ctrl= kwarg。on_message_aborted 被
+                            # @_safe_hook() 包装（patching/hooks.py），wrapper 自
+                            # 己注入 ctrl=ctrl——调用方再传 ctrl= 就是 "got
+                            # multiple values for keyword argument 'ctrl'"
+                            # TypeError（生产 14 天 ×6，/stop 中止封卡从未
+                            # 送达）。v1.9.0 的"补 ctrl"修复修反了：裸传
+                            # message_id 才是 _safe_hook 的正确契约。
+                            on_message_aborted(message_id=_sess.message_id)
                         except Exception:
                             _logger.debug("HLS: suppressed exception", exc_info=True)
                         # Suppress the "⚡ 已停止" gateway card —

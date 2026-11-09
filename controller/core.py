@@ -107,6 +107,10 @@ class _ClientPool:
 
         当前 home 解析不到凭据时回退 env 兜底路径并告警——宁可发错身份，
         不可静默吞卡（错误会在 reply 阶段暴露给日志排查）。
+
+        v1.10.2: 本方法只服务无会话归属的调用（cron 交付 / gateway 卡 /
+        prewarm）。会话内卡片操作一律走 ``client_for_home``（home 固化在
+        CardSession.home，不随执行时刻的 ambient 上下文漂移）。
         """
         from ..config.reader import current_hermes_home, feishu_creds_for_home
 
@@ -127,11 +131,39 @@ class _ClientPool:
             home = None
             creds = feishu_creds_for_home(None)
         cache_key = str(home) if home is not None else "__env__"
+        return self._client_for_creds(cache_key, home, creds)
+
+    def client_for_home(self, home: str | Path) -> FeishuClient:
+        """v1.10.2: 按显式 home 取 client（会话绑定路由）。
+
+        不做任何 ambient 解析——home 来自 CardSession.home（创建时固化），
+        多 profile 并发下不受 loop 线程 thread-local / 其它 turn 的
+        contextvar 污染（2026-11 生产 230002 根因，详见 controller.
+        _client_for 注释）。凭据缺失时抛 RuntimeError（显式 home 解析
+        不到凭据是配置错误，静默 env 兜底会把卡片发到错误 bot）。
+        """
+        home_path = Path(home)
+        from ..config.reader import feishu_creds_for_home
+
+        creds = feishu_creds_for_home(home_path)
+        if not creds.get("app_id") or not creds.get("app_secret"):
+            raise RuntimeError(
+                f"feishu credentials not configured for home {home_path}"
+            )
+        return self._client_for_creds(str(home_path), home_path, creds)
+
+    def _client_for_creds(
+        self,
+        cache_key: str,
+        home: Path | None,
+        creds: dict[str, str],
+    ) -> FeishuClient:
+        """按 cache_key 取缓存的 client 或构建新的（池内统一入口）。"""
+        if not creds.get("app_id") or not creds.get("app_secret"):
+            raise RuntimeError("feishu credentials not configured")
         with self._lock:
             client = self._clients.get(cache_key)
             if client is None:
-                if not creds.get("app_id") or not creds.get("app_secret"):
-                    raise RuntimeError("feishu credentials not configured")
                 client = self._build(home, creds)
                 self._clients[cache_key] = client
             return client
@@ -162,6 +194,8 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
     def __init__(self) -> None:
         self._cfg = Config()
         self._client: FeishuClient | None = None
+        # v1.10.2: 路由池（_ensure_init 构建）；显式声明供 _client_for 判空
+        self._pool: _ClientPool | None = None
         self._sessions: dict[str, CardSession] = {}
         self._sessions_lock = threading.RLock()
         self._interrupt_map: dict[str, str] = {}
@@ -249,6 +283,43 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
     def _client_ok(self) -> bool:
         return self._initialized and self._client is not None
+
+    def _client_for(self, session: CardSession | None) -> FeishuClient:
+        """v1.10.2: 按 session 归属 home 取 FeishuClient（会话绑定路由）。
+
+        根因（2026-11 生产排查，14 天 ×7 次 230002）：_RoutingFeishuClient
+        在每次属性访问时按**执行时刻**的 ambient 上下文解析 home（插件
+        ContextVar → loop 线程共享 thread-local → hermes contextvar →
+        env）。多 profile 并发时 loop 线程的 thread-local 是"最近进入
+        wrapper 的 turn"的 home——另一 profile 的建卡/流式 flush/封卡会
+        路由到错误的 bot：cardkit_create 成功（不涉 chat），reply 到目标
+        chat 报 230002 Bot not in chat → CREATION_FAILED → 该消息无流式
+        卡（2026-11-06 09:18:37 现场实证：main DM 建卡构建了 coder 的
+        client）。CardSession 创建时已把 home 固化在 session.home，会话
+        内卡片操作一律以它为准。
+
+        回退：无 session / session.home 为空（测试桩、极端构造失败）时
+        走 _client 路由代理（ambient）——宁可用错身份也不吞卡。
+        """
+        if (
+            self._pool is not None
+            and session is not None
+            and getattr(session, "home", "")
+        ):
+            try:
+                return self._pool.client_for_home(session.home)
+            except RuntimeError:
+                # 显式 home 无凭据（配置漂移/轮换窗口）：降级 ambient 兜底
+                # 并留指纹，不吞卡
+                _logger.warning(
+                    "HLS: session home %s has no creds — ambient fallback "
+                    "(msg=%s trace=%s)",
+                    str(session.home)[:48],
+                    (session.message_id or "?")[:12],
+                    session.card_trace_id,
+                )
+        assert self._client is not None
+        return self._client
 
     def _get_loop(self) -> asyncio.AbstractEventLoop | None:
         """获取事件循环，缓存以便跨线程复用."""
@@ -348,6 +419,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                 return None
 
         new_session = CardSession(new_message_id, chat_id, loop)
+        # v1.10.2: 续写会话继承原会话的 profile home——链式拆卡/续写的
+        # 建卡与封卡路由不随重激活时刻的 ambient 上下文漂移
+        if stale_session.home:
+            new_session.home = stale_session.home
         # anchor_id 设为原 anchor_id（reply 时仍回复到用户原始消息，保持线程上下文）
         new_session.anchor_id = anchor_id if anchor_id != new_message_id else None
         new_session._is_continuation = True
@@ -453,7 +528,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             if stale._is_continuation and not stale._watchdog_split:
                 return None
             # 限制最多重激活 1 次（极端情况：新 session 也遇到 300309 时不再重激活）
-            if not stale._watchdog_split and stale._continuation_reactivation_count >= 1:
+            if (
+                not stale._watchdog_split
+                and stale._continuation_reactivation_count >= 1
+            ):
                 return None
 
         # 链深上限——两个分支（直达 / 映射续链）汇合后统一检查。映射路径
@@ -520,8 +598,13 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         chat_id: str,
         anchor_id: str | None = None,
         thread_id: str | None = None,
+        turn_home: str | None = None,
     ) -> None:
-        """消息处理开始 — 创建会话 + 发占位卡片."""
+        """消息处理开始 — 创建会话 + 发占位卡片.
+
+        v1.10.2: turn_home 显式指定时固化到 session.home（wrapper 入口
+        在 hermes profile scope 内解析的值），卡片操作全程按它路由；
+        缺省时 CardSession 构造内部回退 ambient 解析（兼容旧调用方）。"""
         if not self.enabled:
             return
         if not message_id:
@@ -605,6 +688,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             return
 
         session = CardSession(message_id, chat_id, loop, thread_id=thread_id)
+        # v1.10.2: wrapper 显式传入的 turn home 优先（入口在 hermes profile
+        # scope 内解析）；为空时保留构造时的 ambient 解析结果
+        if turn_home:
+            session.home = turn_home
         self._sess_put(message_id, session)
         if anchor_id and anchor_id != message_id:
             session.anchor_id = anchor_id
@@ -1392,7 +1479,8 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
             content = optimize_markdown_style(text) or text
             reply_id = session.anchor_id or session.message_id
-            await self._client.reply_text(reply_id, content)
+            # v1.10.2: 会话绑定路由（与卡片操作同源）
+            await self._client_for(session).reply_text(reply_id, content)
             _logger.info(
                 "text fallback sent: msg=%s len=%d",
                 (session.message_id or "?")[:12],
@@ -1557,9 +1645,7 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
                             reason=TerminalReason.NORMAL,
                             source="watchdog_finalize_split",
                         )
-                elif (
-                    inactivity >= stuck_threshold and not session._seal_lock.locked()
-                ):
+                elif inactivity >= stuck_threshold and not session._seal_lock.locked():
                     # ── 规则 2：超长静默拆卡 ──
                     if not session.card_id:
                         # 卡从未建成（CREATING 卡死）——无从拆卡，直接终态回收；

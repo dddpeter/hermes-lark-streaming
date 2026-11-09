@@ -112,13 +112,19 @@ def on_message_started(
     chat_id: str,
     anchor_id: str | None = None,
     thread_id: str | None = None,
+    turn_home: str | None = None,
 ) -> None:
-    """[注入点 1] 函数开头 — message.started."""
+    """[注入点 1] 函数开头 — message.started.
+
+    v1.10.2: turn_home — wrapper 入口已解析的 profile home，显式传入并
+    固化到 session.home（会话绑定路由的锚点），不依赖 CardSession 构造
+    时刻的 ambient 二次解析。"""
     ctrl.on_message_started(
         message_id=message_id,
         chat_id=chat_id,
         anchor_id=anchor_id,
         thread_id=thread_id,
+        turn_home=turn_home,
     )
 
 
