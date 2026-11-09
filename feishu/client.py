@@ -446,6 +446,34 @@ class FeishuClient:
         # 任何重试 —— 网络抖一下用户就什么都收不到。与 cardkit_* 一致处理。
         return await self._retry_transient("reply_text", _do)
 
+    async def send_text_to_chat(self, chat_id: str, text: str) -> str:
+        """v1.10.3: 把纯文本作为新消息发到 chat（非 reply），返回 message_id.
+
+        _send_text_fallback 的合成锚降级通道：hermes 合成锚
+        （proc_*/deleg_* 等）做 reply_to 时 reply_text 必然 99992354
+        （2026-11-09 19:45 生产现场）——锚点保不住就保内容。"""
+
+        async def _do():
+            request = (
+                CreateMessageRequest.builder()
+                .receive_id_type("chat_id")
+                .request_body(
+                    CreateMessageRequestBody.builder()
+                    .receive_id(chat_id)
+                    .msg_type("text")
+                    .content(self._dumps({"text": text}))
+                    .build()
+                )
+                .build()
+            )
+            resp = await self._client.im.v1.message.acreate(request)
+            self._check(resp, "send_text_to_chat")
+            if resp.data and resp.data.message_id:
+                return str(resp.data.message_id)
+            raise FeishuAPIError("send_text_to_chat: response missing message_id")
+
+        return await self._retry_transient("send_text_to_chat", _do)
+
     async def reply_card_by_id(self, message_id: str, card_id: str) -> str:
         """通过 card_id 回复 CardKit 卡片消息，返回 message_id."""
 

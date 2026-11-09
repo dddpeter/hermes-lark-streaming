@@ -143,6 +143,15 @@ class _ClientPool:
         不到凭据是配置错误，静默 env 兜底会把卡片发到错误 bot）。
         """
         home_path = Path(home)
+        # v1.10.3: 快路径——client 已缓存时直接返回，跳过 creds 解析。
+        # 会话绑定路由后本方法在每次卡片操作（流式期每 ~150ms）被调，
+        # creds TTL 过期时的同步读盘（config.yaml + .env，锁内）不该在
+        # 流式热路径上；凭据轮换由 miss 路径 + 60s TTL 兜底。
+        cache_key = str(home_path)
+        with self._lock:
+            cached = self._clients.get(cache_key)
+        if cached is not None:
+            return cached
         from ..config.reader import feishu_creds_for_home
 
         creds = feishu_creds_for_home(home_path)
@@ -150,7 +159,7 @@ class _ClientPool:
             raise RuntimeError(
                 f"feishu credentials not configured for home {home_path}"
             )
-        return self._client_for_creds(str(home_path), home_path, creds)
+        return self._client_for_creds(cache_key, home_path, creds)
 
     def _client_for_creds(
         self,
@@ -606,6 +615,14 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         在 hermes profile scope 内解析的值），卡片操作全程按它路由；
         缺省时 CardSession 构造内部回退 ambient 解析（兼容旧调用方）。"""
         if not self.enabled:
+            # v1.10.3: 此前静默 return——"coder profile 从未建卡"排查时这里
+            # 是最大盲区（enabled=False 或凭据缺失都走这条，零日志指纹）。
+            # enabled = 插件配置开关 + 凭据可解析，每条消息一条 INFO。
+            _logger.info(
+                "HLS: on_message_started skipped — disabled or no creds chat=%s msg=%s",
+                chat_id[:12],
+                (message_id or "?")[:12],
+            )
             return
         if not message_id:
             _logger.warning(
@@ -613,6 +630,10 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             )
             return
         if self._sess_get(message_id) is not None:
+            _logger.debug(
+                "HLS: on_message_started duplicate msg=%s — reusing existing session",
+                message_id[:12],
+            )
             return
 
         self._prune_stale_sessions()
@@ -743,8 +764,6 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
         """Native model reasoning delta (incremental append)."""
         if not self.enabled:
             return
-        if not self._cfg.show_reasoning:
-            return
         # v1.10.0: 拆卡/续写路由——与 on_answer 同构
         _reason_new_id = self._maybe_reactivate_for_continuation(message_id)
         if _reason_new_id is not None:
@@ -756,6 +775,11 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
             message_id = _reason_new_id
         session = self._get_active_session(message_id)
         if session is None or session.guard.should_skip("on_reasoning"):
+            return
+        # v1.10.3: show_reasoning 用会话级快照（每 turn 一次）——配置属性
+        # 背后是 60s TTL 的同步磁盘重读（锁内），此前在 per-delta 热路径
+        # 上访问；无会话场景（防御分支）退回直读。
+        if not session.show_reasoning(self._cfg):
             return
 
         # v1.10.0: watchdog 判活时间戳
@@ -1479,8 +1503,23 @@ class StreamCardController(ControllerMixin, UnifiedControllerMixin):
 
             content = optimize_markdown_style(text) or text
             reply_id = session.anchor_id or session.message_id
-            # v1.10.2: 会话绑定路由（与卡片操作同源）
-            await self._client_for(session).reply_text(reply_id, content)
+            client = self._client_for(session)
+            # v1.10.3: 合成锚降级（与 _reply_card_to_chat 同构）——hermes
+            # 合成锚（proc_*/deleg_*，甚至 list 字符串化形态）做 reply_to
+            # 时 reply_text 必然 99992354（2026-11-09 19:45 生产现场：text
+            # fallback failed 后用户什么都收不到）。锚点保不住就保内容：
+            # 直接发文本到 chat。
+            if reply_id and not str(reply_id).startswith("om_"):
+                _logger.info(
+                    "HLS: text fallback with synthetic anchor %s — sending "
+                    "to chat msg=%s chat=%s",
+                    str(reply_id)[:20],
+                    (session.message_id or "?")[:12],
+                    (session.chat_id or "?")[:12],
+                )
+                await client.send_text_to_chat(session.chat_id, content)
+            else:
+                await client.reply_text(reply_id, content)
             _logger.info(
                 "text fallback sent: msg=%s len=%d",
                 (session.message_id or "?")[:12],

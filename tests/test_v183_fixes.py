@@ -267,10 +267,13 @@ class TestTextFallbackLogging:
     async def test_fallback_failure_is_logged_not_swallowed(self, caplog) -> None:
         """A failed text fallback previously vanished silently
         (`except Exception: pass`) — the user received nothing and the
-        logs had no trace. It must at least log a warning."""
+        logs had no trace. It must at least log a warning.
+
+        v1.10.3: message_id 用 om_ 前缀保持 reply 通道语义（非 om_ 合成锚
+        现在走 send_text_to_chat 降级，见 test_v1102_fixes）。"""
         ctrl = _setup_ctrl()
-        session = _make_session("msg_fb", linear=True)
-        ctrl._sessions["msg_fb"] = session
+        session = _make_session("om_msg_fb", linear=True)
+        ctrl._sessions["om_msg_fb"] = session
         ctrl._client.reply_text = AsyncMock(side_effect=RuntimeError("boom"))
 
         with caplog.at_level(logging.DEBUG, logger="hermes_lark_streaming"):

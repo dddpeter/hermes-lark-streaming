@@ -447,7 +447,7 @@ class UnifiedControllerMixin:
             ),
             tool_steps=session.tool_use.build_display_steps(),
             tool_elapsed_ms=session.tool_use.elapsed_ms,
-            show_reasoning=self._cfg.show_reasoning,
+            show_reasoning=session.show_reasoning(self._cfg),
             expanded=expanded,
             panel_events=state.panel_events,
             max_tool_steps=self._cfg.max_tool_steps,
@@ -878,7 +878,11 @@ class UnifiedControllerMixin:
         answer = split.get("answer_text")
 
         _reasoning_already_tracked = bool(state._current_reasoning)
-        if reasoning and self._cfg.show_reasoning and not _reasoning_already_tracked:
+        if (
+            reasoning
+            and session.show_reasoning(self._cfg)
+            and not _reasoning_already_tracked
+        ):
             state.on_reasoning_delta(reasoning)
         if answer:
             # each interim call contains the full text so far. We must:
@@ -904,7 +908,9 @@ class UnifiedControllerMixin:
                     state.on_answer_delta(_new_part)
             # else: text is same length or shorter - already captured, skip
         if (
-            reasoning and self._cfg.show_reasoning and not _reasoning_already_tracked
+            reasoning
+            and session.show_reasoning(self._cfg)
+            and not _reasoning_already_tracked
         ) or answer:
             self._schedule_linear_flush(session)
 

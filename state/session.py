@@ -49,6 +49,7 @@ class CardSession:
         "_seal_dispatched_at",
         "_seal_done",
         "_seal_lock",
+        "_show_reasoning",
         "_split_sealed_answer_len",
         "_streaming_closed",
         "_streaming_closed_logged",
@@ -172,6 +173,18 @@ class CardSession:
         self._split_sealed_answer_len: int = 0
         # watchdog 链式拆卡深度（0 = 非 watchdog 链），上限防失控循环。
         self._chain_depth: int = 0
+        # v1.10.3: show_reasoning 的每-turn 懒快照（None = 未快照）。配置
+        # 属性背后是 60s TTL 的同步磁盘重读（锁内），此前在流式热路径
+        # （每 flush / 每 reasoning delta）访问——过期那次读盘卡在 event
+        # loop 上并阻塞其它线程的 Config 访问。快照后 /reasoning 运行时
+        # 切换语义从"≤60s 生效"变为"下一回合生效"。
+        self._show_reasoning: bool | None = None
+
+    def show_reasoning(self, cfg: Any) -> bool:
+        """show_reasoning 配置的每-turn 快照读取（见 __init__ 注释）。"""
+        if self._show_reasoning is None:
+            self._show_reasoning = bool(cfg.show_reasoning)
+        return self._show_reasoning
 
     def transition(self, to: str, source: str = "", reason: str = "") -> bool:
         """rejected.  Illegal transitions are logged but do not raise."""

@@ -376,3 +376,82 @@ class TestLoopThreadNoThreadLocalWrite:
         asyncio.run(run())
         # wrapper 结束后：loop 线程的 thread-local 未被写入（保持 None）
         assert cfg_reader._TURN_LOCAL.data is None
+
+
+# ── v1.10.3：文本兜底降级 + 热路径性能 + 可观测性 ──────────────────
+
+
+class TestTextFallbackSyntheticAnchor:
+    def test_text_fallback_synthetic_anchor_sends_to_chat(self) -> None:
+        """v1.10.3: 文本兜底遇合成锚（19:45 生产现场 reply_text 99992354）
+        降级 send_text_to_chat——用户至少收到内容。"""
+        from hermes_lark_streaming.controller.core import StreamCardController
+
+        client = _ScriptedClient({"send_text_to_chat": ["om_sent"]})
+        ctrl = StreamCardController.__new__(StreamCardController)
+        ctrl._client = object()  # 前置守卫只判空；实际调用走 _client_for mock
+        ctrl._client_for = lambda session: client  # type: ignore[method-assign]
+        # message_id 为 list 字符串化形态（hermes 合成锚直传）
+        session = _make_session("/home/a", message_id="['completion', 'proc_x']")
+        session.anchor_id = None
+        asyncio.run(ctrl._send_text_fallback(session, fallback_text="答案内容"))
+        assert client.calls == [("send_text_to_chat", ("chat_x", "答案内容"))]
+
+    def test_text_fallback_om_anchor_replies(self) -> None:
+        from hermes_lark_streaming.controller.core import StreamCardController
+
+        client = _ScriptedClient({"reply_text": ["om_ok"]})
+        ctrl = StreamCardController.__new__(StreamCardController)
+        ctrl._client = object()  # 前置守卫只判空
+        ctrl._client_for = lambda session: client  # type: ignore[method-assign]
+        session = _make_session("/home/a", message_id="om_real")
+        asyncio.run(ctrl._send_text_fallback(session, fallback_text="答案内容"))
+        assert client.calls[0][0] == "reply_text"
+
+
+class TestClientForHomeFastPath:
+    def test_cached_client_survives_creds_removal(self, two_homes, monkeypatch) -> None:
+        """v1.10.3: client 缓存命中直接返回——creds 源被删（轮换窗口）也不
+        影响已建立的会话路由（快路径不查 creds）。"""
+        monkeypatch.setattr(ctrl_core, "FeishuClient", _StubClient)
+        pool = ctrl_core._ClientPool()
+        home_a, _ = two_homes
+        first = pool.client_for_home(home_a)
+        # 凭据文件删除 + 缓存清空（模拟 TTL 过期后的极端窗口）
+        (home_a / "config.yaml").unlink()
+        cfg_reader._CRED_CACHE.clear()
+        assert pool.client_for_home(home_a) is first
+
+
+class TestShowReasoningSnapshot:
+    def test_snapshot_frozen_per_turn(self, two_homes) -> None:
+        """v1.10.3: show_reasoning 每-turn 快照——会话存续期内配置变化不
+        影响本回合渲染（磁盘读退出 per-flush/per-delta 热路径）。"""
+        session = _make_session(str(two_homes[0]))
+        cfg = SimpleNamespace(show_reasoning=True)
+        assert session.show_reasoning(cfg) is True
+        # 配置翻转（/reasoning 运行时切换）——本回合快照不变
+        cfg2 = SimpleNamespace(show_reasoning=False)
+        assert session.show_reasoning(cfg2) is True
+
+
+class TestOnMessageStartedSkipReason:
+    def test_disabled_logs_skip_reason(self, caplog) -> None:
+        """v1.10.3: enabled=False 的静默 return 加 INFO 指纹——
+        coder 无卡排查的最大盲区。"""
+        import threading
+
+        ctrl = ctrl_core.StreamCardController.__new__(ctrl_core.StreamCardController)
+        ctrl._cfg = SimpleNamespace(enabled=False, feishu_app_id="", env_app_id="")
+        ctrl._sessions = {}
+        ctrl._sessions_lock = threading.RLock()
+
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="hermes_lark_streaming"):
+            ctrl.on_message_started(
+                message_id="om_dis", chat_id="chat_x", turn_home="/h"
+            )
+        assert any(
+            "skipped — disabled or no creds" in r.message for r in caplog.records
+        )
