@@ -165,6 +165,12 @@ CARDKIT_TRANSIENT_CODES = {
 _TRANSIENT_RETRY_DELAYS = (0.1, 0.3, 0.6)  # 3 次重试，递增延迟
 _TRANSIENT_MAX_RETRIES = len(_TRANSIENT_RETRY_DELAYS)
 
+# v1.10.4（上游 v2.0.32 审计结论）：99991400（per-API 限频，HTTP 400）分道
+# 退避 — 0.1s 后重试限频等于继续撞墙，三连快重试耗尽后整回合降级。流式更新
+# 有官方 10 QPS/卡豁免，能撞限频的是 create/batch 突发；秒级退避等过窗口。
+_RATE_LIMIT_CODE = 99991400
+_RATE_LIMIT_RETRY_DELAYS = (1.0, 3.0, 6.0)
+
 _ELEMENT_NOT_FOUND_RETRY_DELAYS = (0.2, 0.2, 0.2)
 _ELEMENT_NOT_FOUND_MAX_RETRIES = len(_ELEMENT_NOT_FOUND_RETRY_DELAYS)
 
@@ -286,7 +292,13 @@ class FeishuClient:
                 if not _is_transient_error(e):
                     raise
                 if attempt < max_retries:
-                    delay = _TRANSIENT_RETRY_DELAYS[attempt]
+                    # v1.10.4: 限频码分道秒级退避（网络/token 类快重试不变）
+                    delays = (
+                        _RATE_LIMIT_RETRY_DELAYS
+                        if e.code == _RATE_LIMIT_CODE
+                        else _TRANSIENT_RETRY_DELAYS
+                    )
+                    delay = delays[attempt]
                     _logger.info(
                         "transient retry: %s attempt=%d/%d code=%s delay=%.2fs",
                         operation,

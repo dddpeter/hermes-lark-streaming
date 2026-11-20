@@ -626,7 +626,8 @@ def _build_tool_step_title(step: dict) -> dict:
         # running: keep icon (motion cue) + glyph prefix
         div["icon"] = {
             "tag": "standard_icon",
-            "token": step.get("icon", "tool_02"),
+            # 官方枚举 token（tool_02 不在飞书 enumerations-for-icons 清单内）
+            "token": step.get("icon", "code_outlined"),
             "color": "grey",
         }
     # success/error: drop icon entirely — the glyph + colour carry the meaning.

@@ -170,6 +170,13 @@ _TOOL_DESCRIPTORS: list[dict[str, Any]] = [
         "sanitizer": "search",
     },
     {
+        # hermes 工具发现桥工具（tools/tool_search_catalog.py TOOL_SEARCH_NAME）
+        "aliases": ["tool_search"],
+        "icon": "search_outlined",
+        "title": "Search",
+        "sanitizer": "search",
+    },
+    {
         "aliases": ["web_fetch", "web-fetch", "fetch"],
         "icon": "language_outlined",
         "title": "Fetch web page",
@@ -189,8 +196,10 @@ _TOOL_DESCRIPTORS: list[dict[str, Any]] = [
         "sanitizer": "path",
     },
     {
-        "aliases": ["exec", "bash", "command", "run"],
-        "icon": "setting_outlined",
+        # terminal 为 hermes 实际 shell 工具名（上游 v2.0.4 生产补充）；
+        # 图标 v2.0.16 定稿 code_outlined（齿轮语义不符，统一代码图标）
+        "aliases": ["exec", "bash", "command", "run", "terminal"],
+        "icon": "code_outlined",
         "title": "Run command",
         "sanitizer": "command",
     },
@@ -419,7 +428,8 @@ class ToolUseTracker:
                     "detail": detail,
                     "output": s.output,
                     "error": s.error,
-                    "icon": desc["icon"] if desc else "setting-inter_outlined",
+                    # 未命中描述符回退官方枚举 token（tool_02/setting-inter 均非官方清单）
+                    "icon": desc["icon"] if desc else "code_outlined",
                     "elapsed_ms": s.elapsed_ms,
                     "result_block": None
                     if (desc and desc.get("no_result"))

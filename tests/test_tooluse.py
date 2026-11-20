@@ -325,7 +325,27 @@ class TestToolUseTracker:
         tracker = ToolUseTracker()
         tracker.record_start("custom_tool_xyz", "")
         steps = tracker.build_display_steps()
-        assert steps[0]["icon"] == "setting-inter_outlined"
+        assert steps[0]["icon"] == "code_outlined"
+
+    def test_terminal_alias_gets_code_icon(self) -> None:
+        # hermes 实际 shell 工具名 terminal（上游 v2.0.4 补充 / v2.0.16 定稿）
+        tracker = ToolUseTracker()
+        tracker.record_start("terminal", "pytest -x")
+        steps = tracker.build_display_steps()
+        assert steps[0]["icon"] == "code_outlined"
+
+    def test_exec_gets_code_icon(self) -> None:
+        tracker = ToolUseTracker()
+        tracker.record_start("exec", "ls -la")
+        steps = tracker.build_display_steps()
+        assert steps[0]["icon"] == "code_outlined"
+
+    def test_tool_search_alias(self) -> None:
+        # hermes 工具发现桥工具（上游 v2.0.34 补充）
+        tracker = ToolUseTracker()
+        tracker.record_start("tool_search", "find icon tools")
+        steps = tracker.build_display_steps()
+        assert steps[0]["icon"] == "search_outlined"
 
     def test_no_result_tools_skip_result_block(self) -> None:
         tracker = ToolUseTracker()

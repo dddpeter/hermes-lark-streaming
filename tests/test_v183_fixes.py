@@ -417,7 +417,7 @@ class TestPanelFragmentCache:
             "detail": "pytest",
             "output": "",
             "error": "",
-            "icon": "setting_outlined",
+            "icon": "code_outlined",
             "result_block": None,
             "error_block": None,
         }
