@@ -63,8 +63,8 @@
 > 
 > ```
 > 帮我安装飞书敖式卡片：
-> - Gitee：https://gitee.com/Aowen-Nowor/hermes-lark-streaming/raw/github_sync/docs/AGENT_GUIDE.md
-> - GitHub：https://raw.githubusercontent.com/Aowen-Nowor/hermes-lark-streaming/github_sync/docs/AGENT_GUIDE.md
+> - Gitee：https://gitee.com/dddpeter/hermes-lark-streaming/raw/github_sync/docs/AGENT_GUIDE.md
+> - GitHub：https://raw.githubusercontent.com/dddpeter/hermes-lark-streaming/github_sync/docs/AGENT_GUIDE.md
 > ```
 
 > 插件会自动读取 `HERMES_HOME` 环境变量定位安装路径（默认 `~/.hermes`），非默认路径下无需额外操作。
@@ -73,17 +73,17 @@
 > 以下两种方式任选其一即可：
 ```bash
 # Gitee (SSH)
-hermes plugins install git@gitee.com:Aowen-Nowor/hermes-lark-streaming.git
+hermes plugins install git@gitee.com:dddpeter/hermes-lark-streaming.git
 # Gitee (HTTPS)
-hermes plugins install https://gitee.com/Aowen-Nowor/hermes-lark-streaming
+hermes plugins install https://gitee.com/dddpeter/hermes-lark-streaming
 ```
 **GitHub**
 > 以下两种方式任选其一即可：
 ```bash
 # GitHub (SSH)
-hermes plugins install git@github.com:Aowen-Nowor/hermes-lark-streaming.git
+hermes plugins install git@github.com:dddpeter/hermes-lark-streaming.git
 # GitHub (HTTPS)
-hermes plugins install https://github.com/Aowen-Nowor/hermes-lark-streaming
+hermes plugins install https://github.com/dddpeter/hermes-lark-streaming
 ```
 
 提示时输入 `Y` 启用插件，然后重启网关：

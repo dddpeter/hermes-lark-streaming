@@ -331,7 +331,7 @@ tests/
 
 ```bash
 # 克隆
-git clone -b DEV https://gitee.com/Aowen-Nowor/hermes-lark-streaming.git
+git clone -b github_sync https://gitee.com/dddpeter/hermes-lark-streaming.git
 
 # 安装到 Hermes
 hermes plugins install /path/to/hermes-lark-streaming
@@ -352,7 +352,7 @@ $HERMES_PYTHON -m pytest tests/e2e/ -v
 # 清理 + 重装
 $HERMES_PYTHON ~/.hermes/plugins/hermes-lark-streaming/__main__.py cleanup
 hermes plugins uninstall hermes-lark-streaming
-hermes plugins install https://gitee.com/Aowen-Nowor/hermes-lark-streaming
+hermes plugins install https://gitee.com/dddpeter/hermes-lark-streaming
 hermes gateway restart
 ```
 

@@ -63,8 +63,8 @@ Feishu/Lark CardKit v2.0 streaming cards plugin for Hermes Agent — real-time A
 > 
 > ```
 > Help me install Feishu Ao-style Cards:
-> - Gitee: https://gitee.com/Aowen-Nowor/hermes-lark-streaming/raw/github_sync/docs/AGENT_GUIDE.md
-> - GitHub: https://raw.githubusercontent.com/Aowen-Nowor/hermes-lark-streaming/github_sync/docs/AGENT_GUIDE.md
+> - Gitee: https://gitee.com/dddpeter/hermes-lark-streaming/raw/github_sync/docs/AGENT_GUIDE.md
+> - GitHub: https://raw.githubusercontent.com/dddpeter/hermes-lark-streaming/github_sync/docs/AGENT_GUIDE.md
 > ```
 
 > The plugin automatically reads the `HERMES_HOME` environment variable to locate the installation path (`~/.hermes` by default). No extra steps are needed for non-default paths.
@@ -73,17 +73,17 @@ Feishu/Lark CardKit v2.0 streaming cards plugin for Hermes Agent — real-time A
 > Choose either SSH or HTTPS:
 ```bash
 # Gitee (SSH)
-hermes plugins install git@gitee.com:Aowen-Nowor/hermes-lark-streaming.git
+hermes plugins install git@gitee.com:dddpeter/hermes-lark-streaming.git
 # Gitee (HTTPS)
-hermes plugins install https://gitee.com/Aowen-Nowor/hermes-lark-streaming
+hermes plugins install https://gitee.com/dddpeter/hermes-lark-streaming
 ```
 **GitHub**
 > Choose either SSH or HTTPS:
 ```bash
 # GitHub (SSH)
-hermes plugins install git@github.com:Aowen-Nowor/hermes-lark-streaming.git
+hermes plugins install git@github.com:dddpeter/hermes-lark-streaming.git
 # GitHub (HTTPS)
-hermes plugins install https://github.com/Aowen-Nowor/hermes-lark-streaming
+hermes plugins install https://github.com/dddpeter/hermes-lark-streaming
 ```
 
 Enter `Y` when prompted to enable the plugin, then restart the gateway:

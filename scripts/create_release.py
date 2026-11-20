@@ -5,7 +5,7 @@
 变量传入（shell 自己展开，不依赖 release@gitee 插件的参数模板引擎）：
 
 必需环境变量（在 Gitee Go 流水线参数设置 中配置）：
-    OWNER  仓库 owner（如 Aowen-Nowor）
+    OWNER  仓库 owner（如 dddpeter）
     TOKEN  个人访问令牌（需 projects、releases 权限）
 
     注意：变量名不能以 GITEE_ 或 GO_ 开头（Gitee 系统保留前缀），
@@ -13,7 +13,7 @@
 
 系统变量（Gitee Go 自动注入，无需配置）：
     GITEE_COMMIT  当前 commit SHA（用作 target_commitish）
-    GITEE_REPO    仓库全名（owner/repo 格式，如 Aowen-Nowor/hermes-lark-streaming）
+    GITEE_REPO    仓库全名（owner/repo 格式，如 dddpeter/hermes-lark-streaming）
 
 可选环境变量：
     REPO         仓库名（默认 hermes-lark-streaming）
@@ -80,7 +80,7 @@ def ensure_env() -> tuple[str, str, str, str]:
     if not owner:
         print(
             "ERROR: 环境变量 OWNER 未配置\n"
-            "请在 Gitee Go 流水线设置 → 参数设置 中配置 OWNER=Aowen-Nowor\n"
+            "请在 Gitee Go 流水线设置 → 参数设置 中配置 OWNER=dddpeter\n"
             "注意：变量名不能以 GITEE_ 或 GO_ 开头（系统保留前缀）",
             file=sys.stderr,
         )

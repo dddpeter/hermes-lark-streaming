@@ -13,8 +13,8 @@
 | 依赖 | lark-oapi>=1.6.4, PyYAML>=6.0 |
 | 插件类型 | standalone |
 | 验证基线 | hermes-agent v0.21.1 (tag v2026.9.7)；生产建议 >= v0.19.0 |
-| Gitee | https://gitee.com/Aowen-Nowor/hermes-lark-streaming |
-| GitHub | https://github.com/Aowen-Nowor/hermes-lark-streaming |
+| Gitee | https://gitee.com/dddpeter/hermes-lark-streaming |
+| GitHub | https://github.com/dddpeter/hermes-lark-streaming |
 
 ## 手动安装
 
@@ -22,16 +22,16 @@
 
 ```bash
 # Gitee (SSH)
-hermes plugins install git@gitee.com:Aowen-Nowor/hermes-lark-streaming.git
+hermes plugins install git@gitee.com:dddpeter/hermes-lark-streaming.git
 
 # Gitee (HTTPS)
-hermes plugins install https://gitee.com/Aowen-Nowor/hermes-lark-streaming
+hermes plugins install https://gitee.com/dddpeter/hermes-lark-streaming
 
 # GitHub (SSH)
-hermes plugins install git@github.com:Aowen-Nowor/hermes-lark-streaming.git
+hermes plugins install git@github.com:dddpeter/hermes-lark-streaming.git
 
 # GitHub (HTTPS)
-hermes plugins install https://github.com/Aowen-Nowor/hermes-lark-streaming
+hermes plugins install https://github.com/dddpeter/hermes-lark-streaming
 ```
 
 提示时输入 `Y` 启用插件，然后重启网关：
@@ -43,7 +43,7 @@ hermes gateway restart
 ### 方式二：本地目录
 
 ```bash
-git clone https://gitee.com/Aowen-Nowor/hermes-lark-streaming.git
+git clone https://gitee.com/dddpeter/hermes-lark-streaming.git
 cd hermes-lark-streaming
 hermes plugins add .
 hermes gateway restart
@@ -238,5 +238,5 @@ A: 可忽略，或手动清理 `~/.hermes/config.yaml` 中的相关配置。
 ## 相关链接
 
 - **官方文档**: https://larkcommunity.feishu.cn/wiki/DKkpwgMcJiglIhk88N4cqJEan5f
-- **问题反馈**: https://gitee.com/Aowen-Nowor/hermes-lark-streaming/issues
+- **问题反馈**: https://gitee.com/dddpeter/hermes-lark-streaming/issues
 - **交流群**: [点击加入](https://applink.feishu.cn/client/message/link/open?token=AmoQJk5dwczIahKlW78ADLU%3D)
