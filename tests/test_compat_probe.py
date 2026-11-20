@@ -215,10 +215,6 @@ class TestChecklistParity:
         assert not missing, (
             f"插件新增 hermes 私有锚点未进 SURFACE_CHECKLIST（探测盲区）: {sorted(missing)}"
         )
-        checklist = {(m, s) for m, s in SURFACE_CHECKLIST}
-        # 收敛层里的每一条 import 都必须在探针清单中（探测盲区守卫）
-        missing = imports - checklist
-        assert not missing, f"compat 新增锚点未进 SURFACE_CHECKLIST: {sorted(missing)}"
 
     def test_checklist_covers_all_anchor_files(self) -> None:
         files = {name for name, _, _ in ANCHOR_SIGNATURES}

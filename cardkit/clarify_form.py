@@ -195,6 +195,11 @@ def build_settled_form_card(
 
     ``line`` 为已 escape 的展示行（如 ``**用户:** 答案``）；``line_i18n``
     可选传入 ``_i18n(en_line, zh_line)`` 结果做双语。
+
+    ⚠ line_i18n 陷阱：``i18n_content`` 会**整体覆盖**该元素的合并文案
+    （question + line），不是只替换 line——传入的 i18n 文案必须自带完整
+    内容。当前唯一调用方是过期路径（question 已原子清空），故传 line-only
+    安全；未来若 question 非空，需把 i18n 文案拼上问题行或拆成两个元素。
     """
     text: dict[str, Any] = {
         "tag": "lark_md",
