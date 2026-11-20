@@ -241,13 +241,13 @@ def _maybe_wrap_callbacks(agent) -> None:
             ``_redact_tool_args_for_display(...) or ref.args`` 在脱敏器返回空
             时会把**原始 args** 传下来，整包 dump 的暴露面大于"主参数预览"。"""
             try:
-                from agent.display import build_tool_preview
+                from ..compat.hermes_api import build_tool_preview
 
                 return build_tool_preview(tool_name, display_args) or ""
             except Exception:
                 pass
             try:
-                from agent.display import redact_tool_args_for_display
+                from ..compat.hermes_api import redact_tool_args_for_display
 
                 display_args = (
                     redact_tool_args_for_display(tool_name, display_args)
@@ -276,9 +276,9 @@ def _maybe_wrap_callbacks(agent) -> None:
             agent.display._detect_tool_failure（progress 路径 is_error 的同源
             实现），不可导入时用保守启发式。"""
             try:
-                from agent.display import _detect_tool_failure
+                from ..compat.hermes_api import detect_tool_failure
 
-                return _detect_tool_failure(tool_name, result)
+                return detect_tool_failure(tool_name, result)
             except Exception:
                 pass
             data = result if isinstance(result, dict) else None

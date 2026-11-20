@@ -194,7 +194,9 @@ def _cmd_verify() -> int:
 
         # Verify that gateway modules are importable
         try:
-            from gateway.run import GatewayRunner  # noqa: F401 — import-probe
+            from hermes_lark_streaming.compat.hermes_api import gateway_runner_cls
+
+            gateway_runner_cls()  # import-probe（经收敛层）
 
             print("gateway.run.GatewayRunner: importable")
         except ImportError as e:

@@ -956,9 +956,9 @@ def _wrap_run_background_task(orig: Callable) -> Callable:
                 ctx = _msg_ctx.get()
                 if ctx and ctx.get("card_sent"):
                     try:
-                        from gateway.platforms.base import SendResult
+                        from ..compat.hermes_api import send_result_cls
 
-                        return SendResult(success=True)
+                        return send_result_cls()(success=True)
                     except (ImportError, AttributeError):
                         return None
                 return await original_send(chat_id, content, **send_kwargs)
@@ -1102,7 +1102,9 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
         feishu_adapter = None
 
         try:
-            from gateway.config import Platform  # noqa: F401 — import-probe
+            from ..compat.hermes_api import platform_cls
+
+            platform_cls()  # import-probe（经收敛层，见 compat/hermes_api.py）
 
             for p in list(adapters.keys()):
                 pn = p.value.lower() if hasattr(p, "value") else str(p).lower()
@@ -1121,9 +1123,9 @@ def _wrap_cron_deliver(orig: Callable) -> Callable:
             # (see patching/adapter.py _dispatch_feishu_outbound). Just log
             # and pass through to hermes' normal delivery.
             try:
-                from gateway.config import Platform as _Platform
+                from ..compat.hermes_api import platform_cls
 
-                _relay = adapters.get(_Platform.RELAY) if adapters else None
+                _relay = adapters.get(platform_cls().RELAY) if adapters else None
                 if (
                     _relay is not None
                     and callable(getattr(_relay, "fronts_platform", None))

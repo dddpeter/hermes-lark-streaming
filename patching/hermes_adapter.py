@@ -202,13 +202,15 @@ class HermesCompat:
             except Exception as e:
                 _logger.debug("HLS: anchor-based load failed: %s", e)
 
-        # Strategy 3: Standard import
+        # Strategy 3: Standard import（经 compat 收敛层 — 模块路径锚点唯一家）
         try:
-            import agent.conversation_loop as _mod
-            from agent.conversation_loop import run_conversation as _func
+            from ..compat.hermes_api import (
+                conversation_loop_module,
+                run_conversation_func,
+            )
 
-            self.conversation_loop_module = _mod
-            self.conversation_loop_func = _func
+            self.conversation_loop_module = conversation_loop_module()
+            self.conversation_loop_func = run_conversation_func()
         except (ImportError, AttributeError):
             pass
 
