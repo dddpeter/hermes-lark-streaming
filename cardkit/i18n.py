@@ -53,6 +53,18 @@ _T: dict[str, tuple[str, str]] = {
     "clarify_confirmed": ("Confirmed", "已确认"),
     # v1.8.8: retire_clarify_card（官方钩子）——clarify 以文字作答/超时/取消后卡片收尾
     "clarify_retired": ("*{}*", "*{}*"),
+    # ── v1.12.0: clarify 表单卡（多选/开放题，UPSTREAM-ADOPTION P5）──
+    "clarify_multi_placeholder": ("Select one or more...", "请选择（可多选）"),
+    "clarify_form_submit": ("Submit", "提交"),
+    "clarify_form_reset": ("Cancel", "取消"),
+    "clarify_form_expired": (
+        "Expired — please ask again.",
+        "已过期，请重新发起提问。",
+    ),
+    "clarify_form_required": (
+        "Please complete the required fields.",
+        "请完成必填项后再提交",
+    ),
     "cost_estimated": ("${} (est.)", "${} (估算)"),
     "cost_actual": ("${} (actual)", "${} (实报)"),
     "cost_included": ("Free", "免费"),

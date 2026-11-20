@@ -152,11 +152,11 @@ def _send_result_ok(message_id: str | None = None):
     Lives here (not in patching/adapter.py) so both gateway.py and adapter.py
     can import it from the package without circular imports."""
     try:
-        from gateway.platforms.base import SendResult
+        from ..compat.hermes_api import send_result_cls
 
         if message_id:
-            return SendResult(success=True, message_id=message_id)
-        return SendResult(success=True)
+            return send_result_cls()(success=True, message_id=message_id)
+        return send_result_cls()(success=True)
     except (ImportError, AttributeError):
         return None
 
@@ -258,6 +258,7 @@ from .adapter import (  # noqa: E402
     _clarify_card_info,
     _clarify_card_msg_ids,
     _clarify_choices,
+    _clarify_form_kinds,
     _clarify_questions,
     _clarify_selections,
     _classify_gateway_message,
@@ -538,9 +539,9 @@ def _apply_resolved_targets(compat: Any, *, sys_modules_only: bool) -> dict[str,
                 relay_patched = _apply_relay_adapter_patches(_RelayAdapter)
     else:
         try:
-            from gateway.relay.adapter import RelayAdapter as _RelayAdapter
+            from ..compat.hermes_api import relay_adapter_cls
 
-            relay_patched = _apply_relay_adapter_patches(_RelayAdapter)
+            relay_patched = _apply_relay_adapter_patches(relay_adapter_cls())
         except ImportError:
             relay_patched = False
         except Exception:
@@ -977,7 +978,9 @@ def _apply_create_adapter_hook(*, sys_modules_only: bool = False) -> bool:
             return False
     else:
         try:
-            from gateway.platform_registry import platform_registry as _pr
+            from ..compat.hermes_api import platform_registry as _get_pr
+
+            _pr = _get_pr()
         except (ImportError, AttributeError):
             _logger.info(
                 "hermes-lark-streaming: platform_registry not available yet, "

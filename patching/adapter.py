@@ -127,9 +127,9 @@ async def _dispatch_feishu_outbound(
     # ── EphemeralReply passthrough (v1.3.1 fix) ──
     # NOT duplicate agent replies. They must NEVER be suppressed by the
     try:
-        from gateway.platforms.base import EphemeralReply
+        from ..compat.hermes_api import ephemeral_reply_cls
 
-        if isinstance(content, EphemeralReply):
+        if isinstance(content, ephemeral_reply_cls()):
             return await passthrough()
     except (ImportError, AttributeError):
         pass  # EphemeralReply not available in this Hermes version
@@ -597,9 +597,9 @@ def _wrap_feishu_adapter_edit(orig_edit: Callable) -> Callable:
                                 if message_id in _gateway_cards:
                                     _gateway_cards[message_id]["category"] = category
                             try:
-                                from gateway.platforms.base import SendResult
+                                from ..compat.hermes_api import send_result_cls
 
-                                return SendResult(success=True)
+                                return send_result_cls()(success=True)
                             except (ImportError, AttributeError):
                                 return None
             except Exception:
@@ -701,9 +701,9 @@ def _wrap_feishu_adapter_add_reaction(
                                 if not send_result_semantics:
                                     return None
                                 try:
-                                    from gateway.platforms.base import SendResult
+                                    from ..compat.hermes_api import send_result_cls
 
-                                    return SendResult(success=True)
+                                    return send_result_cls()(success=True)
                                 except (ImportError, AttributeError):
                                     return None
                 except Exception:
@@ -763,9 +763,9 @@ def _wrap_feishu_adapter_delete_reaction(
                                 if not send_result_semantics:
                                     return True
                                 try:
-                                    from gateway.platforms.base import SendResult
+                                    from ..compat.hermes_api import send_result_cls
 
-                                    return SendResult(success=True)
+                                    return send_result_cls()(success=True)
                                 except (ImportError, AttributeError):
                                     return None
                 except Exception:
@@ -789,6 +789,11 @@ _clarify_selections: dict[
 _clarify_timestamps: dict[
     str, float
 ] = {}  # clarify_id → creation time (for TTL cleanup)
+# v1.12.0（UPSTREAM-ADOPTION P5）：clarify_id → 表单卡类型
+#   "multi" = 多选表单卡 / "text" = 开放题表单卡 / 缺省 = 旧版三态卡
+# 落定（form_submit）与 retire 据此选择 build_settled_form_card（200830-safe）
+# 还是旧版 retired 卡。
+_clarify_form_kinds: dict[str, str] = {}
 _CLARIFY_TTL_SEC = 30 * 60  # 30 分钟后未确认的追问自动清除
 
 # Backward-compatible aliases (old names used in tests)
@@ -812,6 +817,7 @@ def _prune_expired_clarify() -> None:
             _clarify_questions.pop(cid, None)
             _clarify_card_msg_ids.pop(cid, None)
             _clarify_selections.pop(cid, None)
+            _clarify_form_kinds.pop(cid, None)
             _clarify_timestamps.pop(cid, None)
         if expired:
             _logger.debug("HLS: pruned %d expired clarify entries", len(expired))
@@ -896,17 +902,42 @@ def _wrap_feishu_adapter_send_clarify(orig_send_clarify: Callable) -> Callable:
 
             normalized = normalize_clarify_choices(choices) if choices else None
 
-            card = build_clarify_card(
-                question=question,
-                choices=normalized,
-                clarify_id=clarify_id,
-            )
+            # v1.12.0（UPSTREAM-ADOPTION P5）：多选/开放题升级为表单卡。
+            # 触发条件（上游 v2.0.36 同款）：hermes clarify_gateway 的 pending
+            # entry 带 multi_select 且有选项 → 多选表单；无选项 → 开放题表单
+            # （multiline input）。get_pending 不可用/无 entry（老版 hermes、
+            # 单选）→ 旧版三态卡，行为不变。
+            _form_kind = ""
+            try:
+                from tools.clarify_gateway import get_pending
+
+                _entry = get_pending(clarify_id)
+                _multi_flag = bool(getattr(_entry, "multi_select", False))
+            except Exception:
+                _multi_flag = False
+            if (_multi_flag and normalized) or not normalized:
+                from ..cardkit import build_clarify_form_card
+
+                _form_kind = "multi" if (_multi_flag and normalized) else "text"
+                card = build_clarify_form_card(
+                    question,
+                    list(normalized) if normalized else None,
+                    clarify_id,
+                    multi_select=_form_kind == "multi",
+                )
+            else:
+                card = build_clarify_card(
+                    question=question,
+                    choices=normalized,
+                    clarify_id=clarify_id,
+                )
 
             # Store normalized choices and question for callback lookup
             with _clarify_lock:
                 if normalized:
                     _clarify_choices[clarify_id] = list(normalized)
                 _clarify_questions[clarify_id] = question
+                _clarify_form_kinds[clarify_id] = _form_kind
                 _clarify_timestamps[clarify_id] = time.time()
 
             # Send the card via FeishuClient
@@ -950,9 +981,9 @@ def _wrap_feishu_adapter_send_clarify(orig_send_clarify: Callable) -> Callable:
 
             # Return success to suppress the original text-based send_clarify
             try:
-                from gateway.platforms.base import SendResult
+                from ..compat.hermes_api import send_result_cls
 
-                return SendResult(success=True, message_id=card_msg_id)
+                return send_result_cls()(success=True, message_id=card_msg_id)
             except (ImportError, AttributeError):
                 return None
 
@@ -1009,6 +1040,7 @@ def _make_feishu_adapter_retire_clarify(orig_retire: Callable | None) -> Callabl
         with _clarify_lock:
             card_msg_id = _clarify_card_msg_ids.pop(clarify_id, "")
             question = _clarify_questions.pop(clarify_id, "")
+            form_kind = _clarify_form_kinds.pop(clarify_id, "")
             _clarify_choices.pop(clarify_id, None)
             _clarify_selections.pop(clarify_id, None)
             _clarify_timestamps.pop(clarify_id, None)
@@ -1029,7 +1061,8 @@ def _make_feishu_adapter_retire_clarify(orig_retire: Callable | None) -> Callabl
             return
 
         try:
-            from ..cardkit import build_clarify_retired_card
+            from ..cardkit import build_clarify_retired_card, build_settled_form_card
+            from ..cardkit.elements import _escape_md
             from ..controller import get_controller
 
             ctrl = get_controller()
@@ -1040,10 +1073,17 @@ def _make_feishu_adapter_retire_clarify(orig_retire: Callable | None) -> Callabl
                     (clarify_id or "?")[:12],
                 )
                 return
-            await ctrl._client.update_card(
-                card_msg_id,
-                build_clarify_retired_card(question=question, notice=notice),
-            )
+            # v1.12.0：表单卡 retire 用 2.0 落定结构（200830-safe：
+            # 飞书拒绝用 1.0 卡片更新 2.0 卡片）；旧版三态卡不变。
+            if form_kind in ("multi", "text"):
+                retired_card = build_settled_form_card(
+                    question, f"*{_escape_md(notice)}*", "grey"
+                )
+            else:
+                retired_card = build_clarify_retired_card(
+                    question=question, notice=notice
+                )
+            await ctrl._client.update_card(card_msg_id, retired_card)
             _logger.info(
                 "clarify card retired: clarify_id=%s card_msg_id=%s notice=%r",
                 (clarify_id or "?")[:12],
@@ -1143,6 +1183,7 @@ async def _schedule_confirm_card(*, cid: str) -> None:
             _clarify_questions.pop(cid, None)
             _clarify_card_msg_ids.pop(cid, None)
             _clarify_selections.pop(cid, None)
+            _clarify_form_kinds.pop(cid, None)
             _clarify_timestamps.pop(cid, None)
 
     if not card_msg_id:
@@ -1285,6 +1326,118 @@ def _handle_clarify_card_action(
     with _clarify_lock:
         question = _clarify_questions.get(clarify_id, "")
         choices = _clarify_choices.get(clarify_id) or None
+        form_kind = _clarify_form_kinds.get(clarify_id, "")
+
+    # ── v1.12.0: 表单组件交互回调（multi_select 勾选变化）──
+    # 表单状态在客户端维护（提交时经 action.form_value 一次性带上），
+    # 组件级 callback 无需处理——返回空响应即可。
+    if clarify_action == "form_component":
+        _logger.debug(
+            "clarify form: component interaction (client-side) clarify_id=%s",
+            (clarify_id or "?")[:12],
+        )
+        return _empty_response()
+
+    # ── v1.12.0: 表单提交（多选/开放题，UPSTREAM-ADOPTION P5）──
+    if clarify_action == "form_submit":
+        from ..cardkit import (
+            build_settled_form_card,
+            extract_form_answer,
+            extract_form_value,
+        )
+        from ..cardkit.elements import _escape_md
+        from ..cardkit.i18n import _T
+
+        def _settled_form_response(line: str, template: str = "green"):
+            """CallBackCard 落定态（200830-safe：schema 2.0 结构）。"""
+            if P2CardActionTriggerResponse is None or CallBackCard is None:
+                return _empty_response()
+            response = P2CardActionTriggerResponse()
+            card = CallBackCard()
+            card.type = "raw"
+            card.data = build_settled_form_card(question, line, template)
+            response.card = card
+            return response
+
+        # 状态已清（TTL/竞态/旧卡）→ 落定灰卡提示过期
+        if form_kind not in ("multi", "text") or not question:
+            _logger.info(
+                "clarify form: submit on expired/unknown clarify_id=%s kind=%r",
+                (clarify_id or "?")[:12],
+                form_kind,
+            )
+            en_exp, zh_exp = _T["clarify_form_expired"]
+            return _settled_form_response(f"*{en_exp}*", "grey")
+
+        # form_kind 以服务端存储为准（callback value 里的作参考）
+        kind = form_kind or str(action_value.get("form_kind") or "text")
+        answer = extract_form_answer(kind, extract_form_value(event), choices)
+        if not answer:
+            _logger.info(
+                "clarify form: empty/invalid submission clarify_id=%s kind=%s",
+                (clarify_id or "?")[:12],
+                kind,
+            )
+            return _empty_response()  # 卡片保持表单态，用户可补填后重提
+
+        _logger.info(
+            "clarify form: resolving kind=%s answer=%r clarify_id=%s",
+            kind,
+            answer[:80],
+            (clarify_id or "?")[:12],
+        )
+
+        # Store for retry semantics（与 select 分支同款状态字典）
+        with _clarify_lock:
+            _clarify_selections[clarify_id] = answer
+
+        loop = getattr(adapter_instance, "_loop", None)
+        if loop is not None:
+            try:
+                from ..compat.hermes_api import safe_schedule_threadsafe
+                from tools.clarify_gateway import resolve_gateway_clarify
+
+                async def _do_form_resolve():
+                    resolve_gateway_clarify(clarify_id, answer)
+                    await _schedule_confirm_card(cid=clarify_id)
+
+                safe_schedule_threadsafe(
+                    _do_form_resolve(),
+                    loop,
+                    logger=_logger,
+                    log_message="clarify form: failed to schedule resolve",
+                    log_level=logging.WARNING,
+                )
+            except (ImportError, Exception) as e:
+                _logger.warning(
+                    "clarify form: resolve scheduling failed: %s", e
+                )
+                try:
+                    from tools.clarify_gateway import resolve_gateway_clarify
+
+                    resolve_gateway_clarify(clarify_id, answer)
+                except (ImportError, Exception) as e2:
+                    _logger.warning(
+                        "clarify form: synchronous resolve also failed: %s", e2
+                    )
+        else:
+            try:
+                from tools.clarify_gateway import resolve_gateway_clarify
+
+                resolve_gateway_clarify(clarify_id, answer)
+            except (ImportError, Exception) as e:
+                _logger.warning("clarify form: synchronous resolve failed: %s", e)
+
+        # 展示行：multi 答案是 JSON 数组字符串 → 、拼接 labels 可读化
+        shown = answer
+        if kind == "multi":
+            try:
+                import json as _json
+
+                shown = "、".join(_json.loads(answer))
+            except Exception:
+                pass
+        return _settled_form_response(f"**{_escape_md(shown)}**")
 
     # ── Handle retry_submit action (re-send previous selection) ──
     if clarify_action == "retry_submit":
@@ -1307,7 +1460,7 @@ def _handle_clarify_card_action(
         loop = getattr(adapter_instance, "_loop", None)
         if loop is not None:
             try:
-                from agent.async_utils import safe_schedule_threadsafe
+                from ..compat.hermes_api import safe_schedule_threadsafe
                 from tools.clarify_gateway import resolve_gateway_clarify
 
                 async def _do_retry_resolve():
@@ -1390,7 +1543,7 @@ def _handle_clarify_card_action(
         loop = getattr(adapter_instance, "_loop", None)
         if loop is not None:
             try:
-                from agent.async_utils import safe_schedule_threadsafe
+                from ..compat.hermes_api import safe_schedule_threadsafe
                 from tools.clarify_gateway import resolve_gateway_clarify
 
                 async def _do_resolve():
@@ -1458,7 +1611,7 @@ def _handle_clarify_card_action(
         loop = getattr(adapter_instance, "_loop", None)
         if loop is not None:
             try:
-                from agent.async_utils import safe_schedule_threadsafe
+                from ..compat.hermes_api import safe_schedule_threadsafe
                 from tools.clarify_gateway import resolve_gateway_clarify
 
                 async def _do_resolve_input():
@@ -1525,7 +1678,7 @@ def _handle_clarify_card_action(
         loop = getattr(adapter_instance, "_loop", None)
         if loop is not None:
             try:
-                from agent.async_utils import safe_schedule_threadsafe
+                from ..compat.hermes_api import safe_schedule_threadsafe
                 from tools.clarify_gateway import resolve_gateway_clarify
 
                 async def _do_resolve_button():
