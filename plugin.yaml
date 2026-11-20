@@ -1,7 +1,7 @@
 name: hermes-lark-streaming
 version: "1.12.1"
 description: "Feishu/Lark CardKit v2.0 streaming cards for Hermes Agent — real-time AI response display with typing effect, tool panels, reasoning, and more"
-author: Aowen-Nowor
+author: dddpeter
 kind: standalone
 # v1.9.0: 仅声明上游 VALID_HOOKS 合法名（hermes_cli/plugins.py）。其余 10 个
 # 历史名（on_answer_delta/on_message_aborted 等）从非任何版本的 VALID_HOOKS

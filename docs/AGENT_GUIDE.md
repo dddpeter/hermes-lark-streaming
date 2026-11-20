@@ -237,6 +237,6 @@ A: 可忽略，或手动清理 `~/.hermes/config.yaml` 中的相关配置。
 
 ## 相关链接
 
-- **官方文档**: https://larkcommunity.feishu.cn/wiki/DKkpwgMcJiglIhk88N4cqJEan5f
 - **问题反馈**: https://gitee.com/dddpeter/hermes-lark-streaming/issues
-- **交流群**: [点击加入](https://applink.feishu.cn/client/message/link/open?token=AmoQJk5dwczIahKlW78ADLU%3D)
+- **GitHub 仓库**: https://github.com/dddpeter/hermes-lark-streaming
+- **Gitee 仓库**: https://gitee.com/dddpeter/hermes-lark-streaming

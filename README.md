@@ -8,9 +8,8 @@
 </p>
 
 <p align="center">
-<a href="mailto:zhengyu.pu@petalmail.com"><img src="https://img.shields.io/badge/Email-zhengyu.pu%40petalmail.com-9C27B0?logo=gmail&logoColor=white" alt="Email"></a>
-<a href="https://applink.feishu.cn/client/message/link/open?token=AmoQJk5dwczIahKlW78ADLU%3D"><img src="https://img.shields.io/badge/The_Only_Official_Group-China-red" alt="The Only Official Group"></a>
-<a href="https://larkcommunity.feishu.cn/wiki/DKkpwgMcJiglIhk88N4cqJEan5f?from=from_copylink"><img src="https://img.shields.io/badge/docs-Knowledge_Base-3370FF?logo=feishu&logoColor=white" alt="Knowledge Base"></a>
+<a href="https://github.com/dddpeter/hermes-lark-streaming"><img src="https://img.shields.io/badge/GitHub-dddpeter-181717?logo=github&logoColor=white" alt="GitHub"></a>
+<a href="https://gitee.com/dddpeter/hermes-lark-streaming"><img src="https://img.shields.io/badge/Gitee-dddpeter-C71D23?logo=gitee&logoColor=white" alt="Gitee"></a>
 </p>
 
 <p align="center">
