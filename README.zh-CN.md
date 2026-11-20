@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/项目-Vibe%20Coding-ff69b4" alt="Vibe Coding">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-4caf50.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/python-3.11+-3776AB.svg" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/version-1.10.1-ff9800.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.12.1-ff9800.svg" alt="Version">
 </p>
 
 <p align="center">
@@ -24,6 +24,14 @@
 > ⚠️ **与上游插件不兼容** — 如已安装原版 `Cheerwhy/hermes-lark-streaming`，请先卸载后再安装本插件。
 >
 > 🚫 **PyPI 上的 `hermes-lark-streaming`（2.x，"泡波卡"/aiduPOP）不是本插件官方发布**——它是第三方账号（monkey2jack）上传的衍生包（fork 本仓库并叠加自有主题层，包元数据却署名 Aowen-Nowor）。请勿 `pip install hermes-lark-streaming`。官方渠道仅为上述 Gitee/GitHub 仓库（经 `hermes plugins install` 安装）。
+
+### 近期亮点（v1.10.2 – v1.12.1）
+
+- **长回合 10 分钟断流根治**（v1.11.0）：官方流式会话 ~600s 寿命到期必返 200850——三层防线（540s 主动续期 + 300317/200850 主流程自愈重发），深度思考长回合不再裸奔
+- **clarify 多选/开放题表单卡**（v1.12.0）：CardKit 2.0 form 容器（multi_select_static / multiline input），单选题保持原三态卡不变
+- **多 profile 并发 230002 根治**（v1.10.2）：会话绑定路由，卡片 API 不再按 ambient 上下文串到错误 bot
+- **维护性双件套**（v1.11.1）：`compat/hermes_api.py` 私有 import 收敛层（hermes 升级只改一个文件）+ `scripts/compat_probe.py` 新版兼容自动探测（S1/S2'/S4'/S5，`--json` 结论）
+- **图标官方化 + 限频分道退避**（v1.10.4）：非官方图标 token 清零；99991400 限频秒级退避 (1/3/6s) 减少整回合降级
 
 ---
 

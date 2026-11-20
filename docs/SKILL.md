@@ -10,7 +10,7 @@
 
 | 属性 | 值 |
 |------|-----|
-| 版本 | 1.8.8 | 协议 | MIT | Python | ≥3.11 | 与上游 | ⚠️ **不兼容** |
+| 版本 | 1.12.1 | 协议 | MIT | Python | ≥3.11 | 与上游 | ⚠️ **不兼容** |
 
 ---
 
@@ -49,11 +49,15 @@ Background: _run_background_task ── [Hook 1/2]
 | `├ gateway.py` | GatewayRunner 包装 | 6 个 wrapper + 时间前缀注入 + cron/background |
 | `├ callbacks.py` | 回调包装 | 5 个内部 wrapper + `already_streamed` 透传 + 长度去重 |
 | `└ adapter.py` | FeishuAdapter 包装 | send/edit/reaction/clarify 包装 + gateway card 注册 |
+| **compat/** | **hermes 私有 API 收敛层 (v1.11.1)** | |
+| `└ hermes_api.py` | 全部 hermes 内部 import 的唯一入口 | 12 访问器（类访问器 + 直通包装），函数内延迟 import，hermes 升级只改此文件 |
 | **cardkit/** | **卡片构建子包** | |
 | `├ __init__.py` | 重导出门面 | `from .elements/cards/special import *` |
 | `├ elements.py` | 原始元素构建器 | 统一面板 + answer streaming + footer + `build_panel_header/children` |
 | `├ cards.py` | 卡片组装器 | streaming/complete/IM-fallback 卡片 |
 | `├ special.py` | 专用卡片类型 | cron/gateway/clarify 三态卡片 + `normalize_clarify_choices` (v1.3.0) |
+| `├ clarify_form.py` | clarify 表单卡 (v1.12.0) | 多选 multi_select_static / 开放题 multiline input + 200830-safe 落定卡 + extract 双路 |
+| `├ seq.py` | 300317/200850 主流程自愈 (v1.11.0) | `call_with_seq_recovery`：seq+1 重发 / 重开+重发 |
 | `├ i18n.py` | 中英双语映射 | `_T` dict + `_i18n()`/`_t()` |
 | `└ md.py` | Markdown 处理 | 标题/表格降级、长文本分块 |
 | **controller/** | **主控制器子包** | |
@@ -92,7 +96,7 @@ Background: _run_background_task ── [Hook 1/2]
 
 **4.2 Monkey Patch 非 AST 注入**: 运行时方法替换，不修改源文件，卸载即恢复。代价：需自计时替代不可访问的局部变量。
 
-**4.3 Hermes 适配层 (v1.1.0)**: `patching/hermes_adapter.py` 的 `HermesCompat` 类隔离所有 Hermes 内部模块访问。3 层策略解析 `agent.conversation_loop`（sys.modules → anchor-based → standard import），解决 Apple Silicon 命名冲突。Hermes 升级时只需改这一个文件。`_resolve_hermes_agent_module()` 作为 backward-compat wrapper 委托给 `HermesCompat`。
+**4.3 Hermes 适配层 (v1.1.0)**: `patching/hermes_adapter.py` 的 `HermesCompat` 类隔离所有 Hermes 内部模块访问。3 层策略解析 `agent.conversation_loop`（sys.modules → anchor-based → standard import），解决 Apple Silicon 命名冲突。`_resolve_hermes_agent_module()` 作为 backward-compat wrapper 委托给 `HermesCompat`。**v1.11.1 起**：散落全仓的 hermes 私有 import（gateway.*/agent.*）收敛至 `compat/hermes_api.py`（12 访问器，函数内延迟 import 保持调用点失败语义）——hermes 升级的锚点适配**以此文件为唯一入口**；`HermesCompat` 仍负责 conversation_loop 的多策略解析（Strategy 3 标准导入路径已走 compat 层）。配套 `scripts/compat_probe.py` 可对新版 hermes 源码做四步自动探测（S1 结构 / S2' 锚点签名漂移 / S4' 私有表面 / S5 pytest 回归，退出码 0/1，`--json` 落盘）。
 
 **4.4 异步 + 双重补丁**: Cron 全链路异步化(禁止 `run_coroutine_threadsafe().result()`)；`run_conversation` 模块级+实例级双重补丁；Cron/后台临时替换 `adapter.send`（卡片替换纯文本）。
 
@@ -356,10 +360,12 @@ hermes gateway restart
 
 ## 12. 版本历史
 
+**v1.12.x (2026-11-20)**：clarify 多选/开放题表单卡（CardKit 2.0 form 容器，200830-safe 落定）+ subagent 代码评审闭环（探针盲区/confirm 卡可读化）。**v1.11.x (2026-11-20)**：200850 流式会话超时三层自愈（根治长回合 10 分钟必炸）+ `compat/hermes_api.py` 私有 import 收敛层 + `scripts/compat_probe.py` 新版兼容自动探测。**v1.10.x (2026-11)**：多 profile 并发 230002 会话绑定路由根治、合成锚降级（建卡+文本兜底）、热路径性能、压缩/错误路径封卡、seal watchdog、官方图标 token、99991400 限频分道退避。
+
 **v1.8.8 (2026-10-23)**：适配 hermes 现役版本（GatewayRunner mixin 化后双检出实测 11/11）——稳定 call_id 工具配对（并行同名工具不再错卡，工具失败正确显示 ❌；扇出语义透传 hermes 功能通道）+ `retire_clarify_card` 官方钩子（clarify 打字作答/超时/取消后卡片收尾停用按钮）+ 卡片宽度 `width_mode=fill`（`cardkit/elements.py CARD_WIDTH_MODE` 单点常量）+ FeishuAdapter 解析路径顺序修正（源码路径优先）+ A2A 子进程守卫回流（`HERMES_A2A_PEER` 跳过补丁）。
 
-详见 [CHANGELOG.md](CHANGELOG.md)
+详见 [CHANGELOG.md](CHANGELOG.md) 与 [UPSTREAM-ADOPTION.md](UPSTREAM-ADOPTION.md)（上游借鉴清单，P0-P5 全部落地）
 
 ---
 
-*Last updated: 2026-10-23 | Version: 1.8.8*
+*Last updated: 2026-11-20 | Version: 1.12.1*

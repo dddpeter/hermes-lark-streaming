@@ -1,3 +1,88 @@
+## v1.12.1 (2026-11-20)
+
+v1.12.0 subagent 代码评审修复（0 Critical / 2 Important / 9 Minor → 全闭环，复审 Ready to merge）。
+
+| 类型 | 问题/功能 | 原因 | 修复/说明 |
+|------|-----------|------|-----------|
+| 🐛 Bug Fix | **探针盲区**：v1.12.0 新增 `tools.clarify_gateway.get_pending` 依赖未进 SURFACE_CHECKLIST，新版 hermes 探测会漏报该项 | P3↔P4 守卫只扫 compat 层，clarify 域 import 不可见 | 清单补 get_pending；守卫升级为扫全插件树（patching/controller/plugin/state/cardkit/compat/__main__）的 gateway.*/agent.*/tools.clarify_gateway 绝对导入（相对导入跳过——本地 patching/gateway.py 与 hermes gateway 同名） |
+| 🐛 Bug Fix | **confirm 卡多选答案原样 JSON**：form_submit 后用户看到的卡显示 `已选择: ["read", "bash"]` | 生产可见卡来自 `_schedule_confirm_card`，未经多选可读化 | 展示层 、拼接 labels；`_clarify_selections` 保留原始 JSON（retry 语义不变） |
+| 🧪 Test | 补 3 例：表单发送失败回退 orig_send_clarify（消息不丢）/ 表单卡 retire 落定灰卡（200830-safe）/ confirm 多选可读化 | 评审 Important#3 | `test_v1120_fixes.py::TestReviewFixesV1121` |
+| ✨ Minor | 探针 S5 子进程 TimeoutExpired 结构化定性（防裸崩丢 `--json`）；S2' complete 回调基线放宽到 3 参前缀（与运行时 warn_signature_drift 同宽，防第 4 参改名误报）；过期文案双语（`build_settled_form_card` 增 `line_i18n`）；多选降级单选补 debug 日志；清理未用 i18n 键/文档计数 | 评审 Minor 批量 | — |
+
+**升级即收益**：无需配置。全量 1220 过。
+
+## v1.12.0 (2026-11-20)
+
+clarify 交互升级（上游 v2.0.36 终版功能移植，docs/UPSTREAM-ADOPTION.md P5）：本地 clarify 卡原为单选下拉 + 单行输入，升级 CardKit 2.0 **form 容器**三种交互：
+
+| 类型 | 问题/功能 | 原因 | 修复/说明 |
+|------|-----------|------|-----------|
+| ✨ Feature | **多选题表单卡**：hermes clarify entry 带 `multi_select` 且有选项 → `multi_select_static`（提交选项数组） | 单选下拉无法表达多选 | `cardkit/clarify_form.py`（上游移植 + 本地 i18n/config 对齐）；触发判定经 `tools.clarify_gateway.get_pending`（不可用 → 旧版卡，行为零变化） |
+| ✨ Feature | **开放题表单卡**：无选项 → `input`（multiline_text，auto_resize 3→6 行） | 单行输入对长回答不友好 | 同上；提交/取消 = form 内 button（submit/reset），callback 携带 `action.form_value` |
+| 🐛 防坑 | **200830-safe**：飞书拒绝用 JSON 1.0 卡片更新 2.0 卡片——落定卡保持 schema 2.0 结构（`build_settled_form_card`） | 上游硬知识 | 落定（提交响应）与 retire（灰卡）两路径 |
+| 🐛 防坑 | **多选答案回填格式** = 选项下标还原 labels 后 `json.dumps`（Hermes multi-select 线上格式，非逗号拼接）；卡片展示再 、拼接可读化 | 上游硬知识 | `extract_form_answer`；v1.12.1 补 confirm 卡展示层 |
+| 🔧 Refactor | patching/adapter.py 的 hermes 私有锚点（SendResult/EphemeralReply/safe_schedule_threadsafe ×9）接入 v1.11.1 compat 收敛层 | P3 收尾 | `tools.clarify_gateway` 13 处属 clarify 域保持域内 |
+
+**测试**：`test_v1120_fixes.py` 21 例（构建器/200830-safe/extract 双路/发卡三分路由/form_submit 解析与落定/空提交保活/过期灰卡）。**真机前提**：飞书应用需已配置卡片回调。
+
+## v1.11.1 (2026-11-20)
+
+维护性双件套（docs/UPSTREAM-ADOPTION.md P3/P4）：
+
+| 类型 | 问题/功能 | 原因 | 修复/说明 |
+|------|-----------|------|-----------|
+| 🔧 Refactor | **`compat/hermes_api.py` 私有 import 收敛层**（12 访问器，上游 compat 模式）：hermes 无公开插件 seam，私有 import 此前散落 patching/{gateway,callbacks,hermes_adapter}.py 等，hermes 升级改锚点要全仓找（v1.9.0 reaction 契约修正人工适配一轮） | 下次 hermes 升级只改一个文件 | 函数内延迟 import 保持"找不到时在调用点抛"的原语义，调用点 try/except 降级行为不变 |
+| ✨ Feature | **`scripts/compat_probe.py` 新版兼容自动探测**：S1 结构级（PYTHONPATH 前置 import gateway.run）/ S2' 锚点签名漂移（静态 AST 扫描，v1.8.9 warn_signature_drift 离线版）/ S4' 私有表面逐项子进程核对（只放 hermes 侧表面——上游曾误放插件自身方法致每次误报的教训照抄）/ S5 新版源码环境跑插件 pytest 全套 | hermes 新版发布后自动出结论，不靠人工 | 任何一步失败立即定性；退出码 0/1；`--json` 落盘；`--skip-pytest` 快速模式 |
+| 🧪 Test | 15 + 12 例（零副作用/调用点抛/伪模块直通/扫描/子进程/CLI/P3↔P4 清单守卫） | 防回归 | 守卫在 v1.12.1 升级为全仓扫描 |
+
+## v1.11.0 (2026-11-20)
+
+**根治长回合 10 分钟必炸**（docs/UPSTREAM-ADOPTION.md P0，最高优先级项）。官方 CardKit 流式会话寿命 ~600s（上游生产实证 600s 整必现 200850），到期后 `stream_element` 必返回 `200850 card streaming timeout`。本地 v1.10.0 watchdog 只覆盖静默场景——持续输出的深度思考长回合照样撞墙，整回合裸奔无恢复。
+
+三层防线（上游 v2.0.32 移植）：
+
+| 层 | 机制 | 说明 |
+|----|------|------|
+| 第一层（预防） | `_renew_stream_if_due`：540s 主动续期（墙前 60s），settings streaming_mode=true 同卡重开 | 失败刷新基线退避不阻断本帧；`_streaming_closed`（TTL/竞态已关）不复活 |
+| 第二层（自愈） | `cardkit/seq.py::call_with_seq_recovery`：300317 seq+1 重发（网络重试同 seq 重发必撞的生产事故根因）；200850 seq+1 重开 → seq+1 重发（官方恢复动作，真飞书 s98 实证 seq 跳号允许） | 上限 3 次防御余量，超限上抛交降级红线（自愈失败 = 现状行为，不会更糟） |
+| 接线 | `_do_unified_flush` 两处 `cardkit_stream_element`（Phase 2/3）包进自愈循环；300309 流式已关早退保留在循环外层 | 不同错误码互不干扰 |
+
+**测试**：`test_v1110_fixes.py` 9 例（200850 重开重发/300317 自愈/连三冲突上抛/非自愈码不重试/540s±1s 边界/closed 不复活/失败退避/未打点哨兵）。**升级即收益**：无需配置，深度思考长回合不再 10 分钟断流。
+
+## v1.10.4 (2026-11-20)
+
+上游借鉴小双件（docs/UPSTREAM-ADOPTION.md P1/P2）：
+
+| 类型 | 问题/功能 | 原因 | 修复/说明 |
+|------|-----------|------|-----------|
+| 🐛 Bug Fix | **非官方图标 token 清零**：工具行默认 icon `tool_02`、exec 族 `setting_outlined`、未命中回退 `setting-inter_outlined` 均不在飞书官方 enumerations-for-icons 清单（上游 v2.0.10 真飞书验证发现） | 官方清单外 token 渲染风险 | 统一 `code_outlined`（上游 v2.0.16 定稿）；补 terminal（hermes 实际 shell 工具名）与 tool_search 别名 |
+| 🐛 Bug Fix | **99991400 限频分道退避**：限频码与普通瞬态码共用 (0.1, 0.3, 0.6) 快退避——0.1s 后重试限频等于继续撞墙，三连耗尽后整回合降级（上游 v2.0.32 审计） | per-API 限频需要秒级等窗 | 限频码独享 (1.0, 3.0, 6.0)；网络/token 类不变 |
+
+**测试**：`test_v1104_fixes.py` 4 例 + tooluse 补 3 例。升级即收益，无需配置。
+
+## v1.10.3 (2026-11-09)
+
+v1.10.2 漏网路径：重启后首日现场抓到 `text fallback failed: reply_text 99992354`——hermes 合成锚（list 字符串化形态）做 reply_to 时**文本兜底**同样炸，用户什么都收不到。
+
+| 类型 | 问题/功能 | 原因 | 修复/说明 |
+|------|-----------|------|-----------|
+| 🐛 Bug Fix | `_send_text_fallback` 合成锚降级（与 `_reply_card_to_chat` 同构）：非 om_ 锚直接发文本到 chat（新增 `FeishuClient.send_text_to_chat`） | 合成锚 reply 必 99992354 | 用户至少收到纯文本答案 |
+| ⚡ Perf | `client_for_home` 快路径——client 缓存命中免 creds 解析（60s TTL 过期时的同步读盘+锁退出流式热路径，每 ~150ms 一次的卡片操作只查 dict） | 热路径磁盘 IO | — |
+| ⚡ Perf | `show_reasoning` 每-turn 快照（`CardSession.show_reasoning`）——配置属性背后是 60s TTL 锁内同步磁盘重读，此前在每 flush/每 reasoning delta 热路径上访问 | 热路径磁盘 IO | /reasoning 切换语义变为下一回合生效 |
+| 🔍 Obs | `on_message_started` 的 enabled=False 静默 return 加 INFO 指纹（"coder profile 从未建卡"排查的最大盲区）；duplicate return 加 debug | 排查盲区 | — |
+
+## v1.10.2 (2026-11-09)
+
+生产 14 天证据链（journal + agent.log）三类事故根治：
+
+| 类型 | 问题/功能 | 原因 | 修复/说明 |
+|------|-----------|------|-----------|
+| 🐛 Bug Fix (P0) | **A 类 ×7 — 230002 Bot not in chat**：多 profile 并发时卡片 API 按执行时刻 ambient 上下文解析 home，loop 线程 thread-local 是"最近进入 wrapper 的 turn"的 home → 另一 profile 的建卡路由到错误 bot（2026-11-06 现场实证：main DM 建卡构建了 coder 的 client） | ambient 路由在并发下必然串号 | **会话绑定路由**：`_ClientPool.client_for_home`（显式 home，无 ambient 解析）+ `controller._client_for(session)`；建卡/流式/封卡/文本兜底全部按 `session.home` 路由；`on_message_started` 增加 turn_home 参数（wrapper 入口在 hermes profile scope 内解析后固化），continuation 会话继承原 home |
+| 🐛 Bug Fix | **B 类 ×12 — 99992354**：hermes 0.21+ 合成锚（proc_*/deleg_*）被当消息 id 用作 reply 锚 | 合成锚不是合法飞书消息 id | `_reply_card_to_chat` 合成锚降级：非 om_ 锚直接发卡到 chat |
+| 🐛 Bug Fix | **C 类 ×6 — on_message_aborted ctrl 双传 TypeError**：/stop 中止封卡从未送达 | 参数错位 | 修正调用约定 |
+
+---
+
 ## v1.10.1 (2026-11-08)
 
 v1.10.0 当日生产反馈修复 — 「会话需要压缩时卡片不封口，继续聊天显示『上下文压缩已推迟 — 摘要仍在生成中。本回合将不压缩继续』」。hermes 侧考证（镜像源 gateway/run_turn_hygiene.py / run_turn_persistence.py / run_turn.py）：`turnhold_deferred` 通知（卫生压缩超 turn-hold 预算）发出后回合**继续不压缩运行**，通知本身不终止回合；真正的封卡断点在回合失败侧——超大 transcript 触发 provider 400/500 异常时，`_handle_message_with_agent` 的 `except Exception` 把异常转成**错误回复字符串**返回（`_hmwa_agent_error_reply`；上下文超限走 `_context_overflow_reply()` 确定性拒绝），COMPLETE hook 从未触发，而插件外层包装器对该字符串**只抑制文本不封卡**——流式卡永转圈、错误回复被吞、非终态会话泄漏。
