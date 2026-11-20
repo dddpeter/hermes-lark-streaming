@@ -387,3 +387,114 @@ class TestFormSubmitCallback:
         if _HAS_CALLBACK_CARD:
             assert resp.card.data["schema"] == "2.0"
             assert resp.card.data["body"]["elements"][0]["icon"]["color"] == "grey"
+
+
+class TestReviewFixesV1121:
+    """v1.12.1 评审补测（Important#3）：发送回退 / retire 表单 / confirm 可读化。"""
+
+    def test_form_send_failure_falls_back_to_text(self, monkeypatch) -> None:
+        """表单卡发送失败 → 外层兜底回退 orig_send_clarify（消息不丢）。"""
+        from hermes_lark_streaming.patching import _wrap_feishu_adapter_send_clarify
+
+        _fake_clarify_gateway(monkeypatch, multi=True, resolved=[])
+        orig = AsyncMock(return_value="text_fallback")
+        wrapped = _wrap_feishu_adapter_send_clarify(orig)
+
+        mock_client = AsyncMock()
+        mock_client.send_card_to_chat = AsyncMock(side_effect=RuntimeError("send boom"))
+        ctrl = MagicMock()
+        ctrl.enabled = True
+        ctrl._client_ok.return_value = True
+        ctrl._client = mock_client
+        ctrl._sess_items_snapshot.return_value = []
+
+        async def call():
+            return await wrapped(
+                MagicMock(), "chat_1", "Q?", ["A", "B"], "cid_fail", "sess_1"
+            )
+
+        with (
+            patch(
+                "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+            ),
+            patch("hermes_lark_streaming.patching._register_gateway_card"),
+        ):
+            result = asyncio.run(call())
+        assert result == "text_fallback"
+        orig.assert_called_once()
+
+    def test_retire_form_card_uses_settled_grey(self, monkeypatch) -> None:
+        """表单卡 retire → 2.0 落定灰卡（200830-safe），旧版三态卡不变。"""
+        from hermes_lark_streaming.patching import (
+            _clarify_card_msg_ids,
+            _clarify_form_kinds,
+            _clarify_questions,
+            _make_feishu_adapter_retire_clarify,
+        )
+
+        _clarify_card_msg_ids["cid_retire"] = "msg_retire"
+        _clarify_questions["cid_retire"] = "Q?"
+        _clarify_form_kinds["cid_retire"] = "multi"
+        try:
+            mock_client = AsyncMock()
+            ctrl = MagicMock()
+            ctrl._client_ok.return_value = True
+            ctrl._client = mock_client
+
+            retire = _make_feishu_adapter_retire_clarify(None)
+            with patch(
+                "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+            ):
+                asyncio.run(retire(MagicMock(), "cid_retire", "已超时"))
+
+            card = mock_client.update_card.call_args.args[1]
+            assert card["schema"] == "2.0"
+            assert "已超时" in card["body"]["elements"][0]["text"]["content"]
+            assert card["body"]["elements"][0]["icon"]["color"] == "grey"
+            # 状态已同步清理
+            assert "cid_retire" not in _clarify_form_kinds
+        finally:
+            _clarify_card_msg_ids.pop("cid_retire", None)
+            _clarify_questions.pop("cid_retire", None)
+            _clarify_form_kinds.pop("cid_retire", None)
+
+    def test_confirm_card_prettifies_multi_json(self, monkeypatch) -> None:
+        """多选 confirm 卡展示 、拼接 labels；_clarify_selections 保留原始
+        JSON（retry 语义需提交原始格式）。评审 Important#2。"""
+        from hermes_lark_streaming.patching import adapter as adapter_mod
+
+        resolved: list = []
+        _fake_clarify_gateway(monkeypatch, multi=True, resolved=resolved)
+        adapter_mod._clarify_card_msg_ids["cid_conf"] = "msg_conf"
+        adapter_mod._clarify_questions["cid_conf"] = "Q?"
+        adapter_mod._clarify_choices["cid_conf"] = ["read", "grep", "bash"]
+        adapter_mod._clarify_form_kinds["cid_conf"] = "multi"
+        raw = json.dumps(["read", "bash"], ensure_ascii=False)
+        adapter_mod._clarify_selections["cid_conf"] = raw
+
+        mock_client = AsyncMock()
+        ctrl = MagicMock()
+        ctrl._client_ok.return_value = True
+        ctrl._client = mock_client
+        try:
+            with patch(
+                "hermes_lark_streaming.controller.get_controller", return_value=ctrl
+            ):
+                asyncio.run(adapter_mod._schedule_confirm_card(cid="cid_conf"))
+
+            card = mock_client.update_card.call_args.args[1]
+            content = card["body"]["elements"][1]["text"]["content"]
+            assert "read、bash" in content, (
+                f"confirm 卡仍是原始 JSON: {content!r}"
+            )
+            assert "[" not in content, "多选答案以 JSON 原样上卡"
+            # retry 用的存储未被展示层覆盖
+            assert adapter_mod._clarify_selections.get("cid_conf", raw) == raw or (
+                "cid_conf" not in adapter_mod._clarify_selections
+            )
+        finally:
+            adapter_mod._clarify_card_msg_ids.pop("cid_conf", None)
+            adapter_mod._clarify_questions.pop("cid_conf", None)
+            adapter_mod._clarify_choices.pop("cid_conf", None)
+            adapter_mod._clarify_form_kinds.pop("cid_conf", None)
+            adapter_mod._clarify_selections.pop("cid_conf", None)

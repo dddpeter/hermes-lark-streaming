@@ -18,7 +18,7 @@ FeishuClient 的方法列为"基类必须有"，导致 0.23.2 起每次探针误
 
 用法：
     python3 scripts/compat_probe.py /path/to/hermes-src [--json out.json]
-                                    [--skip-pytest] [-- pytest -k foo ...]
+                                    [--skip-pytest] [-- -k foo ...]
 """
 
 from __future__ import annotations
@@ -49,9 +49,11 @@ ANCHOR_SIGNATURES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     # combined_tool_start_callback(call_id, tool_name, args)
     ("run_turn_runner.py", "combined_tool_start_callback",
      ("call_id", "tool_name", "args")),
-    # combined_tool_complete_callback(call_id, tool_name, args, result)
+    # combined_tool_complete_callback(call_id, tool_name, args, result) —
+    # 运行时基线（callbacks.py warn_signature_drift）只校验前 3 位（result
+    # 经 *args 位置绑定），探针保持同宽以免第 4 位改名即误报 INCOMPAT
     ("run_turn_runner.py", "combined_tool_complete_callback",
-     ("call_id", "tool_name", "args", "result")),
+     ("call_id", "tool_name", "args")),
 )
 
 #: S4' hermes 私有表面清单（compat/hermes_api.py 收敛层的家底 + clarify
@@ -70,6 +72,8 @@ SURFACE_CHECKLIST: tuple[tuple[str, str], ...] = (
     ("agent.display", "_detect_tool_failure"),
     ("tools.clarify_gateway", "mark_awaiting_text"),
     ("tools.clarify_gateway", "resolve_gateway_clarify"),
+    # v1.12.0 起 send 路径依赖（多选表单判定；评审 Important#1 补上）
+    ("tools.clarify_gateway", "get_pending"),
 )
 
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -175,10 +179,14 @@ def _run_py(code: str, hermes_root: Path, *, extra_path: Path | None = None,
     if extra_path is not None:
         paths.append(str(extra_path))
     env["PYTHONPATH"] = os.pathsep.join(paths + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
-    proc = subprocess.run(
-        [sys.executable, "-c", code, *(args or [])],
-        capture_output=True, text=True, env=env, timeout=600,
-    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", code, *(args or [])],
+            capture_output=True, text=True, env=env, timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        # 结构化超时定性（评审 Minor#5）：不能让探针本身裸崩、丢 --json
+        return 124, f"subprocess timeout after 600s: {code[:80]}"
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 

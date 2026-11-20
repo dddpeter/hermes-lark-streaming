@@ -913,7 +913,16 @@ def _wrap_feishu_adapter_send_clarify(orig_send_clarify: Callable) -> Callable:
 
                 _entry = get_pending(clarify_id)
                 _multi_flag = bool(getattr(_entry, "multi_select", False))
-            except Exception:
+            except Exception as e:
+                # 老 hermes 无 get_pending（ImportError）→ 单选降级是预期；
+                # 其它异常（网关状态异常）也降级但留痕，便于排查
+                # "多选题为何渲染成单选下拉"。
+                _logger.debug(
+                    "clarify form: get_pending unavailable (%s) — multi flag "
+                    "defaults to False, clarify_id=%s",
+                    e,
+                    (clarify_id or "?")[:12],
+                )
                 _multi_flag = False
             if (_multi_flag and normalized) or not normalized:
                 from ..cardkit import build_clarify_form_card
@@ -1175,6 +1184,19 @@ async def _schedule_confirm_card(*, cid: str) -> None:
         card_msg_id = _clarify_card_msg_ids.get(cid, "")
         question = _clarify_questions.get(cid, "")
         selected = _clarify_selections.get(cid, "")
+        form_kind = _clarify_form_kinds.get(cid, "")
+
+    # v1.12.1（评审 Important#2）：多选答案的存储/重试格式是 JSON 数组
+    # 字符串（Hermes 线上格式），但 confirm 卡直接渲染会显示
+    # `已选择: ["read", "bash"]`——展示层还原为 、拼接 labels。
+    # 注意：_clarify_selections 保持原样（retry 语义需提交原始格式）。
+    if form_kind == "multi" and selected.startswith("["):
+        try:
+            import json as _json
+
+            selected = "、".join(_json.loads(selected))
+        except (ValueError, TypeError):
+            pass  # 非 JSON（异常数据）→ 原样显示，宁糊勿空
 
     def _cleanup():
         """Pop all stored entries for this clarify_id (idempotent)."""
@@ -1346,16 +1368,22 @@ def _handle_clarify_card_action(
             extract_form_value,
         )
         from ..cardkit.elements import _escape_md
-        from ..cardkit.i18n import _T
+        from ..cardkit.i18n import _T, _i18n
 
-        def _settled_form_response(line: str, template: str = "green"):
+        def _settled_form_response(
+            line: str,
+            template: str = "green",
+            line_i18n: dict | None = None,
+        ):
             """CallBackCard 落定态（200830-safe：schema 2.0 结构）。"""
             if P2CardActionTriggerResponse is None or CallBackCard is None:
                 return _empty_response()
             response = P2CardActionTriggerResponse()
             card = CallBackCard()
             card.type = "raw"
-            card.data = build_settled_form_card(question, line, template)
+            card.data = build_settled_form_card(
+                question, line, template, line_i18n=line_i18n
+            )
             response.card = card
             return response
 
@@ -1367,7 +1395,9 @@ def _handle_clarify_card_action(
                 form_kind,
             )
             en_exp, zh_exp = _T["clarify_form_expired"]
-            return _settled_form_response(f"*{en_exp}*", "grey")
+            return _settled_form_response(
+                f"*{en_exp}*", "grey", line_i18n=_i18n(f"*{en_exp}*", f"*{zh_exp}*")
+            )
 
         # form_kind 以服务端存储为准（callback value 里的作参考）
         kind = form_kind or str(action_value.get("form_kind") or "text")

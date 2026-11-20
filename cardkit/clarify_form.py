@@ -185,12 +185,23 @@ def build_clarify_form_card(
 
 
 def build_settled_form_card(
-    question: str, line: str, template: str = "green"
+    question: str,
+    line: str,
+    template: str = "green",
+    *,
+    line_i18n: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """构建表单卡落定态（200830-safe：保持 schema 2.0 结构）.
 
-    ``line`` 为已 escape 的展示行（如 ``**用户:** 答案``）。
+    ``line`` 为已 escape 的展示行（如 ``**用户:** 答案``）；``line_i18n``
+    可选传入 ``_i18n(en_line, zh_line)`` 结果做双语。
     """
+    text: dict[str, Any] = {
+        "tag": "lark_md",
+        "content": f"**{_escape_md(str(question))}**\n\n{line}",
+    }
+    if line_i18n is not None:
+        text["i18n_content"] = line_i18n
     return {
         "schema": "2.0",
         "config": {
@@ -206,12 +217,9 @@ def build_settled_form_card(
                         "tag": "standard_icon",
                         "token": "info_outlined",
                         "size": "20px 20px",
-                        "color": "blue" if template == "blue" else template,
+                        "color": template,
                     },
-                    "text": {
-                        "tag": "lark_md",
-                        "content": f"**{_escape_md(str(question))}**\n\n{line}",
-                    },
+                    "text": text,
                 }
             ]
         },

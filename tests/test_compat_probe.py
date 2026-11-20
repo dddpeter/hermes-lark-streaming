@@ -108,7 +108,8 @@ def _full_fake_hermes(extra: dict[str, str] | None = None) -> dict[str, str]:
         "tools/__init__.py": "",
         "tools/clarify_gateway.py": (
             "def mark_awaiting_text(*a, **k):\n    pass\n\n\n"
-            "def resolve_gateway_clarify(*a, **k):\n    pass\n"
+            "def resolve_gateway_clarify(*a, **k):\n    pass\n\n\n"
+            "def get_pending(*a, **k):\n    return None\n"
         ),
         "agent/run_turn_progress.py": _GOOD_PROGRESS,
         "agent/run_turn_runner.py": (
@@ -174,20 +175,46 @@ class TestProbeFlow:
 
 
 class TestChecklistParity:
-    """P3↔P4 一致性守卫：compat/hermes_api.py 的 import 面 == 探针清单
-    （tools.clarify_gateway 两个符号暂不在收敛层，单独列入清单）。"""
+    """P3↔P4 一致性守卫（评审 Important#1 升级：扫全插件树）：
+    任何文件里 `from gateway.* / agent.* / tools.clarify_gateway import X`
+    都必须在探针 SURFACE_CHECKLIST 中——否则新 hermes 上探针漏报盲区。
+    """
 
-    def test_compat_imports_covered_by_checklist(self) -> None:
-        tree = ast.parse((REPO_ROOT / "compat" / "hermes_api.py").read_text())
+    _SCAN_DIRS = ("patching", "controller", "plugin", "state", "cardkit", "compat")
+    _SCAN_FILES = ("__main__.py",)
+
+    def _collect_plugin_hermes_imports(self) -> set[tuple[str, str]]:
         imports: set[tuple[str, str]] = set()
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.ImportFrom)
-                and node.module
-                and node.module.split(".")[0] in ("gateway", "agent", "tools")
-            ):
+        paths: list[Path] = [REPO_ROOT / f for f in self._SCAN_FILES]
+        for d in self._SCAN_DIRS:
+            paths.extend((REPO_ROOT / d).rglob("*.py"))
+        for path in paths:
+            if not path.exists() or "test" in path.parts:
+                continue
+            try:
+                tree = ast.parse(path.read_text())
+            except (OSError, SyntaxError):
+                continue
+            for node in ast.walk(tree):
+                # level>0 是包内相对导入（from .gateway import … 是本地
+                # patching/gateway.py，不是 hermes gateway）——只查绝对导入
+                if not (isinstance(node, ast.ImportFrom) and node.module and node.level == 0):
+                    continue
+                root = node.module.split(".")[0]
+                if root not in ("gateway", "agent") and node.module != "tools.clarify_gateway":
+                    continue
                 for alias in node.names:
                     imports.add((node.module, alias.name))
+        return imports
+
+    def test_plugin_imports_covered_by_checklist(self) -> None:
+        imports = self._collect_plugin_hermes_imports()
+        assert imports, "扫描器失效——插件不可能零 hermes 私有 import"
+        checklist = {(m, s) for m, s in SURFACE_CHECKLIST}
+        missing = imports - checklist
+        assert not missing, (
+            f"插件新增 hermes 私有锚点未进 SURFACE_CHECKLIST（探测盲区）: {sorted(missing)}"
+        )
         checklist = {(m, s) for m, s in SURFACE_CHECKLIST}
         # 收敛层里的每一条 import 都必须在探针清单中（探测盲区守卫）
         missing = imports - checklist

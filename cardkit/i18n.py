@@ -61,10 +61,6 @@ _T: dict[str, tuple[str, str]] = {
         "Expired — please ask again.",
         "已过期，请重新发起提问。",
     ),
-    "clarify_form_required": (
-        "Please complete the required fields.",
-        "请完成必填项后再提交",
-    ),
     "cost_estimated": ("${} (est.)", "${} (估算)"),
     "cost_actual": ("${} (actual)", "${} (实报)"),
     "cost_included": ("Free", "免费"),
