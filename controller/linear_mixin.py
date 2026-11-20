@@ -34,6 +34,8 @@ from ..cardkit.md import (
     escape_markdown_asterisks,
     optimize_markdown_style,
 )
+# v1.11.0: 300317/200850 主流程自愈（上游 v2.0.36 移植，docs/UPSTREAM-ADOPTION.md P0）
+from ..cardkit.seq import call_with_seq_recovery
 from ..feishu import (
     CARDKIT_SEQUENCE_CONFLICT,
     CARDKIT_STREAMING_CLOSED,
@@ -63,6 +65,10 @@ if TYPE_CHECKING:
     from ..state.session import CardSession
 
 _logger = logging.getLogger("hermes_lark_streaming")
+
+# v1.11.0: 官方 CardKit 流式会话寿命 ~600s（生产实证 600s 整必现 200850）。
+# 墙前 60s 主动续期（settings streaming_mode=true 同卡重开，seq 跳号允许）。
+_STREAM_RENEW_AGE_SEC = 540.0
 
 # Strip stray internal-reasoning tags from any text we expose as the user-facing
 # seal summary.  The LLM stream may occasionally emit unbalanced ``</mm:think>``
@@ -316,6 +322,8 @@ class UnifiedControllerMixin:
                 session.card_id = card_id
                 session.card_msg_id = card_msg_id
                 session.card_created_at = _time.time()
+                # v1.11.0: 流式会话起点 — 续期/自愈计时基线
+                session.stream_session_at = _time.monotonic()
                 session.flush.set_throttle(self._cfg.flush_interval_sec)
 
                 # Track existing elements — only 2 are pre-allocated
@@ -456,6 +464,59 @@ class UnifiedControllerMixin:
             fragment_cache=state.panel_fragment_cache() if fragment_cache else None,
         )
 
+    def _reopen_streaming_closure(
+        self, session: CardSession
+    ) -> Callable[[int], Coroutine[Any, Any, None]] | None:
+        """构造 200850 自愈用的重开闭包（cardkit_reopen_streaming 注入）."""
+        if not session.card_id:
+            return None
+        client = self._client_for(session)
+        card_id = session.card_id
+
+        async def _reopen(sequence: int) -> None:
+            await client.cardkit_reopen_streaming(card_id, sequence=sequence)
+
+        return _reopen
+
+    async def _renew_stream_if_due(self, session: CardSession) -> None:
+        """第一层防线：流式会话 600s 墙前主动续期（上游 v2.0.32 移植）.
+
+        官方流式会话寿命 ~600s；持续输出的长回合不会触发 watchdog 拆卡
+        （那是静默场景），照样撞墙。到期前 60s 同卡 settings
+        streaming_mode=true 重开（seq 跳号允许）。预防性续期失败不阻断
+        本帧——事后自愈（200850 → 重开重发）仍闭环；失败也刷新基线，
+        防每帧重复尝试（退避语义）。
+        """
+        if (
+            not session.card_id
+            or session._streaming_closed
+            or session.stream_session_at <= 0.0
+        ):
+            return
+        if _time.monotonic() - session.stream_session_at < _STREAM_RENEW_AGE_SEC:
+            return
+        reopen = self._reopen_streaming_closure(session)
+        if reopen is None:
+            return
+        try:
+            session.sequence += 1
+            await reopen(session.sequence)
+            session.stream_session_at = _time.monotonic()
+            _logger.info(
+                "HLS: streaming session renewed card=%s trace=%s age>=%.0fs",
+                session.card_id[:12],
+                session.card_trace_id,
+                _STREAM_RENEW_AGE_SEC,
+            )
+        except Exception:
+            session.stream_session_at = _time.monotonic()
+            _logger.info(
+                "HLS: streaming renew skipped card=%s trace=%s",
+                session.card_id[:12],
+                session.card_trace_id,
+                exc_info=True,
+            )
+
     async def _do_unified_flush(self, session: CardSession) -> None:
         """Unified panel flush — max 2 API calls per flush cycle."""
         if session.is_terminal_phase or session.state == COMPLETING:
@@ -466,6 +527,9 @@ class UnifiedControllerMixin:
         if state is None:
             return
         assert self._client is not None
+
+        # v1.11.0: 第一层防线 — 流式会话到期前主动续期（600s 墙 → 540s 续）
+        await self._renew_stream_if_due(session)
 
         actions: list[dict[str, Any]] = []
 
@@ -661,12 +725,23 @@ class UnifiedControllerMixin:
                 # 否则 lost-update 会把最后一段增量困住直到封卡。
                 _src_len = len(state.answer_text)
                 session.sequence += 1
-                try:
+
+                async def _send_answer(seq: int) -> None:
                     await self._client_for(session).cardkit_stream_element(
                         session.card_id,
                         ANSWER_ELEMENT_ID,
                         content,
-                        sequence=session.sequence,
+                        sequence=seq,
+                    )
+
+                try:
+                    # v1.11.0: 第二层防线 — 300317 seq+1 重发 / 200850
+                    # 重开+重发（300309 流式已关走下方早退，互不干扰）
+                    await call_with_seq_recovery(
+                        session,
+                        _send_answer,
+                        what="unified answer stream (phase2)",
+                        reopen=self._reopen_streaming_closure(session),
                     )
                     if len(state.answer_text) == _src_len:
                         state.answer_dirty = False
@@ -836,12 +911,22 @@ class UnifiedControllerMixin:
             # v1.8.9 (P0-2 关联): 同上——水位守卫防 lost-update 清 dirty。
             _src_len = len(state.answer_text)
             session.sequence += 1
-            try:
+
+            async def _send_answer_p3(seq: int) -> None:
                 await self._client_for(session).cardkit_stream_element(
                     session.card_id,
                     ANSWER_ELEMENT_ID,
                     content,
-                    sequence=session.sequence,
+                    sequence=seq,
+                )
+
+            try:
+                # v1.11.0: 第二层防线 — 同 Phase 2（300317/200850 主流程自愈）
+                await call_with_seq_recovery(
+                    session,
+                    _send_answer_p3,
+                    what="unified answer stream (phase3)",
+                    reopen=self._reopen_streaming_closure(session),
                 )
                 if len(state.answer_text) == _src_len:
                     state.answer_dirty = False

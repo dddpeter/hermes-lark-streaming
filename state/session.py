@@ -76,6 +76,7 @@ class CardSession:
         "message_id",
         "sequence",
         "state",
+        "stream_session_at",
         "terminal_reason",
         "terminal_source",
         "text",
@@ -110,6 +111,9 @@ class CardSession:
         self.flush = FlushController()
         self.footer: dict[str, Any] = {}
         self.sequence = 1
+        # v1.11.0: 流式会话起点（monotonic）— 600s 墙前 540s 主动续期 +
+        # 200850 事后自愈的计时基线（建卡时置，重开成功刷新）。
+        self.stream_session_at: float = 0.0
         self._loop = loop
         self.created_at = time.time()
         self.deferred_background_review_closed = False

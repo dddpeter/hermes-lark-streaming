@@ -143,6 +143,10 @@ CARDKIT_ELEMENT_LIMIT_DIRECT = (
 CARDKIT_SCHEMA_ERROR = 300315  # 卡片 Schema 非法属性 (unknown property) OR element not found for insert_before
 CARDKIT_STREAMING_CLOSED = 300309  # 卡片流式模式已关闭
 CARDKIT_SEQUENCE_CONFLICT = 300317  # sequence 冲突
+# v1.11.0（上游 v2.0.32）：流式会话超时 — 官方流式会话寿命 ~600s，到期后
+# stream_element 必返回此码；官方恢复动作 = 同卡 settings streaming_mode=true
+# 重开（14 天有效期内），seq 跳号允许。自愈见 cardkit/seq.py。
+CARDKIT_STREAMING_TIMEOUT = 200850
 CARDKIT_ELEMENT_NOT_FOUND = (
     300313  # 元素不存在（add_elements 后服务端尚未持久化时的竞态）
 )
@@ -759,6 +763,41 @@ class FeishuClient:
             self._check(resp, "cardkit_close_streaming")
 
         await self._retry_transient("cardkit_close_streaming", _do)
+
+    async def cardkit_reopen_streaming(
+        self,
+        card_id: str,
+        *,
+        sequence: int = 0,
+    ) -> None:
+        """重开 CardKit 卡片的流式会话（200850 官方恢复动作）.
+
+        v1.11.0：流式会话到期（~600s）后 ``stream_element`` 返回 200850，
+        官方恢复动作为同卡（14 天有效期内）通过 settings 再次置
+        ``streaming_mode=true`` 重开。由 cardkit/seq.py 的自愈循环在
+        seq+1 后调用（seq 跳号允许，真飞书实验 s98 实证）。
+        """
+        settings: dict[str, Any] = {
+            "config": {
+                "streaming_mode": True,
+            }
+        }
+
+        async def _do():
+            body_builder = SettingsCardRequestBody.builder().settings(
+                self._dumps(settings)
+            )
+            body_builder = body_builder.sequence(sequence)
+            request = (
+                SettingsCardRequest.builder()
+                .card_id(card_id)
+                .request_body(body_builder.build())
+                .build()
+            )
+            resp = await self._client.cardkit.v1.card.asettings(request)
+            self._check(resp, "cardkit_reopen_streaming")
+
+        await self._retry_transient("cardkit_reopen_streaming", _do)
 
     async def cardkit_update_summary(
         self,
