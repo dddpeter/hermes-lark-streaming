@@ -21,6 +21,8 @@ Feishu/Lark CardKit v2.0 streaming cards plugin for Hermes Agent — real-time A
 
 > Based on [Cheerwhy/hermes-lark-streaming](https://github.com/Cheerwhy/hermes-lark-streaming) v0.7.0, with extensive refactoring and optimizations
 >
+> 📛 **Upstream is no longer maintained** — the original repo ([Cheerwhy/hermes-lark-streaming](https://github.com/Cheerwhy/hermes-lark-streaming), now [Aowen-Nowor/hermes-lark-streaming](https://github.com/Aowen-Nowor/hermes-lark-streaming)) has stopped updating (final state: upstream v2.0.36, 2026-11-20) and is scheduled to go private on 2027-01-01. **This fork is the actively maintained continuation** — all upstream features worth porting have been adopted here (see [docs/UPSTREAM-ADOPTION.md](docs/UPSTREAM-ADOPTION.md), P0–P5 all landed).
+>
 > ⚠️ **Incompatible with the upstream plugin** — if you have the original `Cheerwhy/hermes-lark-streaming` installed, please uninstall it first before installing this version.
 >
 > 🚫 **The `hermes-lark-streaming` package on PyPI (2.x, "aiduPOP") is NOT published by us** — it is a third-party derivative (uploaded by an unrelated account; forked from this repo with an extra theme layer, yet signed with the author's name). Do **not** `pip install hermes-lark-streaming`. Official channels: the Gitee/GitHub repos above (via `hermes plugins install`).

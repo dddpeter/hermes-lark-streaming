@@ -21,6 +21,8 @@
 
 > 基于 [Cheerwhy/hermes-lark-streaming](https://github.com/Cheerwhy/hermes-lark-streaming) v0.7.0 版本 fork 后进行改造和优化
 >
+> 📛 **上游已停更** — 原仓库（[Cheerwhy/hermes-lark-streaming](https://github.com/Cheerwhy/hermes-lark-streaming)，现 [Aowen-Nowor/hermes-lark-streaming](https://github.com/Aowen-Nowor/hermes-lark-streaming)）已停止更新（终态：上游 v2.0.36，2026-11-20），并将于 2027-01-01 转为私有仓库。**本 fork 是持续维护的演进线**——上游值得借鉴的功能已全部落地（见 [docs/UPSTREAM-ADOPTION.md](docs/UPSTREAM-ADOPTION.md)，P0–P5 全部完成）。
+>
 > ⚠️ **与上游插件不兼容** — 如已安装原版 `Cheerwhy/hermes-lark-streaming`，请先卸载后再安装本插件。
 >
 > 🚫 **PyPI 上的 `hermes-lark-streaming`（2.x，"泡波卡"/aiduPOP）不是本插件官方发布**——它是第三方账号（monkey2jack）上传的衍生包（fork 本仓库并叠加自有主题层，包元数据却署名 Aowen-Nowor）。请勿 `pip install hermes-lark-streaming`。官方渠道仅为上述 Gitee/GitHub 仓库（经 `hermes plugins install` 安装）。
