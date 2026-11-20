@@ -1,3 +1,16 @@
+## v2.0.0 (2026-11-20)
+
+里程碑版本（无破坏性配置变更，升级零成本）。上游 [Aowen-Nowor/hermes-lark-streaming](https://github.com/Aowen-Nowor/hermes-lark-streaming) 停更（终态 v2.0.36，2027-01-01 转私有）后，本仓库作为持续维护演进线，主版本号升至 2.0.0 标志分叉点后独立演进的新阶段。
+
+| 类型 | 内容 |
+|------|------|
+| ✨ 里程碑 | **上游借鉴全部落地**（docs/UPSTREAM-ADOPTION.md P0–P5）：200850 流式会话超时三层自愈（v1.11.0）、clarify 多选/开放题表单卡（v1.12.0）、官方图标 token + 限频分道退避（v1.10.4）、`compat/hermes_api.py` 私有 import 收敛层 + `scripts/compat_probe.py` 新版兼容自动探测（v1.11.1） |
+| 🛡️ 稳定性 | 多 profile 并发 230002 会话绑定路由根治、合成锚降级（建卡 + 文本兜底）、压缩/错误路径封卡、seal watchdog + 静默拆卡（v1.10.0–v1.10.3） |
+| 🔍 质量 | subagent 代码评审闭环（0 Critical / 2 Important / 9 Minor 全修复，复审 Ready to merge）；全量单测 1160 → 1220 |
+| 📦 工程 | 仓库/品牌迁移至 dddpeter 双仓（安装/克隆/issue/发版脚本链接、README 徽章、plugin.yaml 署名）、Gitee remote、CHANGELOG 补齐 v1.10.2–v1.12.1 七版本条目、SKILL.md 对码核对更新 |
+
+**升级**：`hermes plugins install https://gitee.com/dddpeter/hermes-lark-streaming`（或 GitHub 同名仓库）。配置完全兼容。
+
 ## v1.12.1 (2026-11-20)
 
 v1.12.0 subagent 代码评审修复（0 Critical / 2 Important / 9 Minor → 全闭环，复审 Ready to merge）。

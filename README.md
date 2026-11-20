@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/Project-Vibe%20Coding-ff69b4" alt="Vibe Coding">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-4caf50.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/python-3.11+-3776AB.svg" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/version-1.12.1-ff9800.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.0.0-ff9800.svg" alt="Version">
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@ Feishu/Lark CardKit v2.0 streaming cards plugin for Hermes Agent — real-time A
 >
 > 🚫 **The `hermes-lark-streaming` package on PyPI (2.x, "aiduPOP") is NOT published by us** — it is a third-party derivative (uploaded by an unrelated account; forked from this repo with an extra theme layer, yet signed with the author's name). Do **not** `pip install hermes-lark-streaming`. Official channels: the Gitee/GitHub repos above (via `hermes plugins install`).
 
-### Recent Highlights (v1.10.2 – v1.12.1)
+### Recent Highlights (v1.10.2 – v2.0.0)
 
 - **Long-turn 10-minute streaming cutoff fixed** (v1.11.0): official streaming sessions die at ~600s with error 200850 — three-layer defense (proactive renewal at 540s + in-flow self-healing resend for 300317/200850). Deep-thinking turns no longer go dark.
 - **Multi-select / open-ended clarify form cards** (v1.12.0): CardKit 2.0 form container (`multi_select_static` / multiline `input`); single-select clarifies keep the original three-state card.

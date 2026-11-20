@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/项目-Vibe%20Coding-ff69b4" alt="Vibe Coding">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-4caf50.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/python-3.11+-3776AB.svg" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/version-1.12.1-ff9800.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-2.0.0-ff9800.svg" alt="Version">
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@
 >
 > 🚫 **PyPI 上的 `hermes-lark-streaming`（2.x，"泡波卡"/aiduPOP）不是本插件官方发布**——它是第三方账号（monkey2jack）上传的衍生包（fork 本仓库并叠加自有主题层，包元数据却署名 Aowen-Nowor）。请勿 `pip install hermes-lark-streaming`。官方渠道仅为上述 Gitee/GitHub 仓库（经 `hermes plugins install` 安装）。
 
-### 近期亮点（v1.10.2 – v1.12.1）
+### 近期亮点（v1.10.2 – v2.0.0）
 
 - **长回合 10 分钟断流根治**（v1.11.0）：官方流式会话 ~600s 寿命到期必返 200850——三层防线（540s 主动续期 + 300317/200850 主流程自愈重发），深度思考长回合不再裸奔
 - **clarify 多选/开放题表单卡**（v1.12.0）：CardKit 2.0 form 容器（multi_select_static / multiline input），单选题保持原三态卡不变
