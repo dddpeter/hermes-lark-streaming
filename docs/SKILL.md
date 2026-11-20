@@ -48,12 +48,12 @@ Background: _run_background_task ── [Hook 1/2]
 | `├ hooks.py` | Hook 函数层 | `_safe_hook` 统一 enabled 检查 + 异常捕获 |
 | `├ gateway.py` | GatewayRunner 包装 | 6 个 wrapper + 时间前缀注入 + cron/background |
 | `├ callbacks.py` | 回调包装 | 5 个内部 wrapper + `already_streamed` 透传 + 长度去重 |
-| `└ adapter.py` | FeishuAdapter 包装 | send/edit/reaction/clarify 包装 + gateway card 注册 |
+| `└ adapter.py` | FeishuAdapter 包装 | send/edit/reaction/clarify 包装（**v1.12.0 clarify 多选/开放题表单卡**：发卡三分路由 + form_submit/form_component 回调 + retire 落定）+ gateway card 注册 |
 | **compat/** | **hermes 私有 API 收敛层 (v1.11.1)** | |
 | `└ hermes_api.py` | 全部 hermes 内部 import 的唯一入口 | 12 访问器（类访问器 + 直通包装），函数内延迟 import，hermes 升级只改此文件 |
 | **cardkit/** | **卡片构建子包** | |
-| `├ __init__.py` | 重导出门面 | `from .elements/cards/special import *` |
-| `├ elements.py` | 原始元素构建器 | 统一面板 + answer streaming + footer + `build_panel_header/children` |
+| `├ __init__.py` | 重导出门面 | `from .cards/clarify_form/elements/special import *` |
+| `├ elements.py` | 原始元素构建器 | 统一面板 + answer streaming + footer + 官方图标 token (v1.10.4) |
 | `├ cards.py` | 卡片组装器 | streaming/complete/IM-fallback 卡片 |
 | `├ special.py` | 专用卡片类型 | cron/gateway/clarify 三态卡片 + `normalize_clarify_choices` (v1.3.0) |
 | `├ clarify_form.py` | clarify 表单卡 (v1.12.0) | 多选 multi_select_static / 开放题 multiline input + 200830-safe 落定卡 + extract 双路 |
@@ -62,19 +62,19 @@ Background: _run_background_task ── [Hook 1/2]
 | `└ md.py` | Markdown 处理 | 标题/表格降级、长文本分块 |
 | **controller/** | **主控制器子包** | |
 | `├ __init__.py` | 重导出门面 | StreamCardController + CardSession + 状态常量 |
-| `├ core.py` | 主控制器(单例) | 管理生命周期 + 并发限流 (v1.1.0) + epoch 校验 + _sessions/_interrupt_map 线程安全锁 (v1.3.0) |
+| `├ core.py` | 主控制器(单例) | 管理生命周期 + 并发限流 (v1.1.0) + epoch 校验 + _sessions/_interrupt_map 线程安全锁 (v1.3.0) + **会话绑定路由 `_client_for(session)` (v1.10.2)** |
 | `├ mixin.py` | cron/gateway 编排 | `_do_cron_deliver`/`_do_gateway_deliver` + 共享工具方法 |
-| `└ linear_mixin.py` | 线性模式编排(主路径) | 统一面板更新、保留式封卡、卡片级安全网、300309 fallback、300313 fallback |
+| `└ linear_mixin.py` | 线性模式编排(主路径) | 统一面板更新、保留式封卡、卡片级安全网、300309 fallback、300313 fallback、**流式会话续期 `_renew_stream_if_due` + 200850/300317 自愈接线 (v1.11.0)** |
 | **state/** | **状态与数据子包** | |
 | `├ __init__.py` | 重导出门面 | CardSession + TextState + UnifiedLinearState + CardPhase |
 | `├ phase.py` | 卡片生命周期状态机 | `CardPhase`/`TerminalReason` + `PHASE_TRANSITIONS` |
-| `├ session.py` | CardSession 数据类 | __slots__ + `_creation_stages` set (v1.1.0) + `card_trace_id` + `transition()`/`should_proceed()` |
+| `├ session.py` | CardSession 数据类 | __slots__ + `_creation_stages` set (v1.1.0) + `card_trace_id` + `stream_session_at` 续期基线 (v1.11.0) + `transition()`/`should_proceed()` |
 | `├ linear.py` | 统一面板状态 | `ReasoningRound` 数据类 + `UnifiedLinearState` 扁平管理 |
 | `├ text.py` | 文本增量追踪 | `<think|thinking|thought>` 标签拆分 |
-| `└ tooluse.py` | 工具调用追踪 | `ToolStep`/`ToolSession`，敏感信息脱敏 |
+| `└ tooluse.py` | 工具调用追踪 | `ToolStep`/`ToolSession`，敏感信息脱敏 + 官方图标描述符表 (v1.10.4 补 terminal/tool_search) |
 | **feishu/** | **飞书 API 客户端子包** | |
 | `├ __init__.py` | 重导出门面 | `FeishuClient`, `UnavailableGuard`, 错误码常量 + 判断函数 |
-| `├ client.py` | 飞书 API 客户端 | CardKit v2 + IM API，错误码分类 + 瞬态重试 + 300313 专用重试 (v1.1.0) |
+| `├ client.py` | 飞书 API 客户端 | CardKit v2 + IM API，错误码分类 + 瞬态重试 + 300313 专用重试 (v1.1.0) + 99991400 限频分道秒级退避 (v1.10.4) + `cardkit_reopen_streaming` (v1.11.0) |
 | `└ guard.py` | 消息不可用保护 | 删除/撤回检测，30分钟 TTL |
 | **flush/** | **节流调度子包** | |
 | `├ __init__.py` | 重导出门面 | `FlushController`, `CARDKIT_MS` |
@@ -87,6 +87,10 @@ Background: _run_background_task ── [Hook 1/2]
 | **plugin/** | **插件注册子包 (v1.1.0)** | |
 | `└ __init__.py` | 注册入口 | `register()`/`unregister()` + 自动备份 config + FeishuClient 预热 + monitor 启动 |
 | `__main__.py` | CLI 入口 | status/verify/doctor/cleanup/python |
+| **scripts/** | **运维脚本** | |
+| `├ compat_probe.py` | hermes 新版兼容自动探测 (v1.11.1) | S1 结构 / S2' 锚点签名漂移(AST) / S4' 私有表面 / S5 pytest 回归；退出码 0/1，`--json` 落盘 |
+| `├ create_release.py` | Gitee Go 流水线发版 | 调 Gitee API 创建 Release（OWNER/TOKEN 环境变量） |
+| `└ notify_feishu.py` | 发版飞书通知 | release 流水线回调 | |
 
 ---
 
@@ -125,6 +129,14 @@ Background: _run_background_task ── [Hook 1/2]
 **4.15 状态机标志位收敛 (v1.1.0)**: 8 个布尔标志位合并为 `_creation_stages: set[str]`（含 `"panel"`/`"answer"`/`"hint_removed"`）+ 4 个正交布尔（`_streaming_closed`/`_was_aborted`/`_pending_flush`/`_first_flush_done`）。
 
 **4.16 去重机制收敛 (v1.1.0)**: 从 5 层降到 2 层——保留 `_hls_wrapper` 标记 + `already_streamed` 透传 + `_stream_consumed_len` 长度追踪。移除 `_native_reasoning_active`（用 `bool(state._current_reasoning)` 代替）和 `_force_rewrap`（用 ContextVar 重解析代替）。
+
+**4.17 会话绑定路由 (v1.10.2)**: 多 profile 并发下 ambient 上下文路由会把卡片 API 发到错误 bot（230002 生产事故 ×7）。`_ClientPool.client_for_home`（显式 home、零 ambient 解析）+ `controller._client_for(session)`——建卡/流式/封卡/文本兜底一律按 `session.home`（创建时固化）路由；`on_message_started` 接收 `turn_home` 在 hermes profile scope 内解析后固化。任何新增卡片 API 调用点都必须走 `_client_for(session)`，禁止 ambient。
+
+**4.18 200850 流式会话三层防线 (v1.11.0)**: 官方流式会话寿命 ~600s，到期 `stream_element` 必返 200850。第一层 `_renew_stream_if_due`（540s 主动续期，settings streaming_mode=true 同卡重开）；第二层 `cardkit/seq.py::call_with_seq_recovery`（300317 seq+1 重发 / 200850 重开+重发，上限 3，超限上抛交降级红线——自愈失败=旧行为）；接线点在 `linear_mixin._do_unified_flush` 两处 stream_element。新增卡片写路径若持续输出，须包进自愈循环。
+
+**4.19 seal watchdog 与拆卡 (v1.10.0)**: 两个定时器兜底非正常终态：`seal_watchdog_sec`（COMPLETING 停滞 >120s → 重派封卡，终态收尾统一入口 `_finalize_terminal`）；`stuck_card_timeout_sec`（流式卡静默 >1800s → 当前卡 partial-seal 保内容、剩余输出开链式新卡，连续两个静默窗口才 finalize）。watchdog 只覆盖**静默**场景；持续输出的长回合由 4.18 防线覆盖，二者互补。
+
+**4.20 clarify 双轨卡片 (v1.12.0)**: 发卡判定经 `tools.clarify_gateway.get_pending` 的 `multi_select` 标志三分路由——多选题 → form 容器 `multi_select_static`；开放题（无选项）→ form 容器 multiline `input`；单选 → 旧版三态卡（行为不变）。`_clarify_form_kinds` 记录卡片类型，回调（form_submit/form_component）、confirm 展示（多选答案 、拼接）、retire（2.0 灰卡落定，200830-safe）按轨分流；多选答案存储格式 = `json.dumps(labels)`（Hermes multi-select 线上格式），`_clarify_selections` 保持原始 JSON 供 retry。
 
 ---
 
@@ -245,6 +257,10 @@ hermes_lark_streaming:
   flush_interval_ms: 200           # 面板+答案混合刷新间隔（默认200ms，范围70~2000）
   answer_flush_interval_ms: 150    # v1.7.0 新增：answer-only 快车道刷新间隔（默认150ms，原硬编码）
   card_ttl_sec: 600
+  # ── Seal watchdog (v1.10.0) ──
+  seal_watchdog_sec: 120           # COMPLETING 停滞超时重派封卡（30~3600，0=禁用）
+  stuck_card_timeout_sec: 1800     # 流式卡静默自动拆卡：当前卡 partial-seal 保内容、
+                                   # 剩余输出开链式新卡（>=600，0=禁用）
   max_tool_steps: 20               # 范围 1~100
   max_reasoning_rounds: 20         # 范围 1~100
   footer:
@@ -265,7 +281,7 @@ Lark 海外版设 `https://open.larksuite.com/open-apis`，或用 `FEISHU_DOMAIN
 
 ## 9. Hook 索引 (12 个注入点)
 
-v1.7.0：`on_cron_deliver` 已删除（死代码——`_wrap_cron_deliver` 直接调 `ctrl._do_cron_deliver`，该 hook 从未被调用；grep 全仓 + hermes v0.20.5 源码交叉验证）。表格顺序与 `plugin.yaml provides_hooks` 一致（v1.7.0 勘误：此前两处顺序不一致）。
+v1.7.0：`on_cron_deliver` 已删除（死代码——`_wrap_cron_deliver` 直接调 `ctrl._do_cron_deliver`，该 hook 从未被调用）。**v1.9.0 起 `plugin.yaml provides_hooks` 仅声明 `pre_gateway_dispatch`**（hermes `VALID_HOOKS` 唯一合法名）；下表其余注入点由 patching 层直接 wrap `run_conversation` 回调链实现，与 hermes hook 注册机制无关，但调用语义不变。
 
 | # | Hook | 签名 | 说明 |
 |---|------|------|------|
@@ -286,34 +302,42 @@ v1.7.0：`on_cron_deliver` 已删除（死代码——`_wrap_cron_deliver` 直�
 
 ## 10. 测试结构
 
+单测按主题分组的既有文件（核心）+ 按版本命名的回归文件（`test_vN_fixes.py`，每版本新增用例落独立文件）：
+
 ```
 tests/
+  conftest.py                  — 仓库注册为 hermes_lark_streaming 包 + loop 清理
+  ── 核心单元 ──
   test_version.py              — 版本号读取逻辑
   test_patch.py                — Hook 函数单元测试
   test_controller.py           — 会话生命周期 + 统一面板模式 + COMPLETING 短路
+                                 （_make_session/_setup_ctrl 是多个版本回归文件的共享 harness）
   test_cardkit.py              — 卡片 JSON 构建
   test_config.py               — 配置读取 + 热更新
   test_flush.py                — 节流调度器
-  test_text.py                 — 文本增量追踪
-  test_tooluse.py              — 工具调用追踪
-  test_linear.py               — 线性模式状态管理
+  test_text.py / test_tooluse.py / test_linear.py / test_phase.py
   test_monkey_patch.py         — 时间感知/重入守卫/cron 降级
   test_unavailable_guard.py    — 消息不可用保护
-  test_phase.py                — 卡片生命周期状态机
   test_gateway_card.py         — 网关卡片构建
   test_callback_interception.py — 回调拦截
-  test_clarify_card.py         — 交互式明义卡片
-  e2e/                         — 端到端测试 (v1.1.0)
-    framework.py               — E2ETestRunner (mock/真飞书自动切换)
-    mock_feishu.py             — MockFeishuServer
-    test_e2e_full.py           — 全链路测试用例
-    conftest.py                — runner fixture + 模式检测
-    .env.example               — 真飞书环境变量说明
-  integration/
-    test_hermes_compat.py      — Hermes 源码兼容性验证（需 HERMES_SRC_DIR）
+  test_clarify_card.py         — clarify 交互卡片（三态 + 表单卡路由共用 harness）
+  ── 专项 ──
+  test_compat.py               — compat/hermes_api 收敛层（v1.11.1）
+  test_compat_probe.py         — 兼容探针 + P3↔P4 清单全仓守卫（v1.11.1）
+  test_multiplex_dedupe.py     — 多 bot 去重
+  test_concurrency_v130.py     — 并发锁
+  test_seal_summary_scrub.py   — 封卡摘要 <mm:think> 清洗
+  ── 版本回归（节选）──
+  test_v170/180/181/183/185/188/189/190/121_fixes.py
+  test_v1100/1101/1102/1104_fixes.py
+  test_v1110_fixes.py          — 200850 三层防线（v1.11.0）
+  test_v1120_fixes.py          — clarify 表单卡 + 评审修复（v1.12.0/1）
+  e2e/                         — 端到端 (mock/真飞书自动切换，需 .env)
+  integration/                 — 需真实 hermes 源码环境（HERMES_SRC_DIR）
 ```
 
-运行: `HERMES_PYTHON=$(python3 ~/.hermes/plugins/hermes-lark-streaming/__main__.py python) -m pytest tests/`
+运行（CI 同款）: `python -m pytest tests/ -q --ignore=tests/e2e --ignore=tests/integration`
+本地开发可用仓库 `.venv/`（`python3 -m venv .venv && .venv/bin/pip install pytest pytest-asyncio lark-oapi pyyaml`）。
 
 ### CLI 命令参考
 
